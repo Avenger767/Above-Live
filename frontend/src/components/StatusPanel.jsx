@@ -46,18 +46,21 @@ export default function StatusPanel({ status, aircraftCount, connectionMode }) {
         <span className="status-val">{timeAgo(s.lastUpdate)}</span>
       </div>
 
-      <div className="status-row">
-        <span className="status-key">Satellites</span>
-        <span className={`status-val ${s.spaceError ? 'bad' : ''}`}>
-          {s.spaceCount != null ? `${s.spaceCount} tracked` : '—'}
-        </span>
-      </div>
-      <div className="status-row">
-        <span className="status-key">Weather</span>
-        <span className={`status-val ${s.weatherError && !s.weatherOk ? 'bad' : s.weatherOk ? 'ok' : ''}`}>
-          {s.weatherCondition || (s.weatherOk ? 'ok' : '—')}
-        </span>
-      </div>
+      {/* Optional layers — only shown when enabled (off by default in V1). */}
+      {s.spaceCount > 0 && (
+        <div className="status-row">
+          <span className="status-key">Satellites</span>
+          <span className={`status-val ${s.spaceError ? 'bad' : ''}`}>{s.spaceCount} tracked</span>
+        </div>
+      )}
+      {(s.weatherOk || s.weatherError) && (
+        <div className="status-row">
+          <span className="status-key">Weather</span>
+          <span className={`status-val ${s.weatherError && !s.weatherOk ? 'bad' : s.weatherOk ? 'ok' : ''}`}>
+            {s.weatherCondition || (s.weatherOk ? 'ok' : '—')}
+          </span>
+        </div>
+      )}
 
       {s.spaceError && (
         <div className="warn">

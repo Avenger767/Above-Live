@@ -17,8 +17,8 @@
   },
   "layers": {
     "aircraft": true,
-    "satellites": true,
-    "weather": true
+    "satellites": false,
+    "weather": false
   },
   "calibration": {
     "offsetX": 0,

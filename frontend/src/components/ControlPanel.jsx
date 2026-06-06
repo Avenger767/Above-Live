@@ -9,10 +9,8 @@ const PROVIDERS = ['MOCK', 'API', 'LOCAL_ADSB'];
 
 export default function ControlPanel({ settings, onChange, onToggleFullscreen, onReset, onOpenCalibration }) {
   const d = settings.display;
-  const layers = settings.layers || { aircraft: true, satellites: true, weather: true };
 
   const setDisplay = (patch) => onChange({ display: { ...d, ...patch } });
-  const setLayers = (patch) => onChange({ layers: { ...layers, ...patch } });
 
   return (
     <div className="panel-section">
@@ -38,35 +36,6 @@ export default function ControlPanel({ settings, onChange, onToggleFullscreen, o
             </option>
           ))}
         </select>
-      </label>
-
-      <h3>Layers</h3>
-
-      <label className="field toggle">
-        <span>Aircraft</span>
-        <input
-          type="checkbox"
-          checked={layers.aircraft !== false}
-          onChange={(e) => setLayers({ aircraft: e.target.checked })}
-        />
-      </label>
-
-      <label className="field toggle">
-        <span>Satellites &amp; ISS</span>
-        <input
-          type="checkbox"
-          checked={layers.satellites !== false}
-          onChange={(e) => setLayers({ satellites: e.target.checked })}
-        />
-      </label>
-
-      <label className="field toggle">
-        <span>Weather</span>
-        <input
-          type="checkbox"
-          checked={layers.weather !== false}
-          onChange={(e) => setLayers({ weather: e.target.checked })}
-        />
       </label>
 
       <h3>Display</h3>

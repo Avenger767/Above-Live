@@ -4,7 +4,7 @@
 # frontend is reachable at the URL below. Designed for Raspberry Pi OS desktop.
 set -e
 
-URL="${ABOVE_LIVE_URL:-http://localhost:5173}"
+URL="${ABOVE_LIVE_URL:-http://localhost:4000}"
 
 # Try the common Chromium binary names on Raspberry Pi OS / Debian.
 BROWSER=""

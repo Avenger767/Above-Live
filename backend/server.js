@@ -9,6 +9,9 @@ import express from 'express';
 import cors from 'cors';
 import { createServer } from 'node:http';
 import { WebSocketServer } from 'ws';
+import { existsSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { loadSettings, getSettings, saveSettings, resetSettings } from './settings/settingsStore.js';
 import { createMockProvider } from './aircraft/providers/mockProvider.js';
@@ -20,6 +23,13 @@ import { createWeatherProvider } from './weather/weatherProvider.js';
 
 const PORT = Number(process.env.PORT) || 4000;
 const APP_NAME = 'Above Live';
+
+// In production (Raspberry Pi / single-port mode) the backend also serves the
+// built frontend from frontend/dist, so the whole app lives on ONE port/URL.
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const DIST_DIR = join(__dirname, '..', 'frontend', 'dist');
+const SERVE_STATIC =
+  (process.env.NODE_ENV === 'production' || process.env.SERVE_STATIC === '1') && existsSync(DIST_DIR);
 
 // --- Provider registry ---------------------------------------------------
 const providers = {
@@ -50,15 +60,17 @@ const state = {
   lastWeatherUpdate: 0,
 };
 
-// Independent timers so a slow/unreachable space or weather API never stalls
-// the aircraft poll loop. Both degrade gracefully and keep the display running.
+// Optional overlay layers (satellites/ISS + weather). OFF by default in V1:
+// the focus is aircraft. When disabled, no polling happens and no warnings are
+// produced. They can be re-enabled later via settings ("layers" block) — see
+// README. Each runs on its own timer so a slow API never stalls the aircraft
+// loop, and both degrade gracefully.
 let spaceTimer = null;
 let weatherTimer = null;
 const SPACE_INTERVAL_MS = 3000; // satellites move fast; refresh often
 const WEATHER_INTERVAL_MS = 60000; // weather changes slowly; once a minute
 
 async function pollSpace() {
-  if (getSettings().layers?.satellites === false) return;
   try {
     state.space = await spaceProvider.fetchSpace(getSettings());
     state.spaceError = null;
@@ -69,7 +81,6 @@ async function pollSpace() {
 }
 
 async function pollWeather() {
-  if (getSettings().layers?.weather === false) return;
   try {
     state.weather = await weatherProvider.fetchWeather(getSettings());
     state.weatherError = null;
@@ -82,12 +93,26 @@ async function pollWeather() {
 }
 
 function startOverlayPolling() {
-  if (spaceTimer) clearInterval(spaceTimer);
-  if (weatherTimer) clearInterval(weatherTimer);
-  pollSpace();
-  pollWeather();
-  spaceTimer = setInterval(pollSpace, SPACE_INTERVAL_MS);
-  weatherTimer = setInterval(pollWeather, WEATHER_INTERVAL_MS);
+  if (spaceTimer) { clearInterval(spaceTimer); spaceTimer = null; }
+  if (weatherTimer) { clearInterval(weatherTimer); weatherTimer = null; }
+  const layers = getSettings().layers || {};
+
+  if (layers.satellites) {
+    pollSpace();
+    spaceTimer = setInterval(pollSpace, SPACE_INTERVAL_MS);
+  } else {
+    // Layer off: clear any stale data so the API/feed reports an empty layer.
+    state.space = [];
+    state.spaceError = null;
+  }
+
+  if (layers.weather) {
+    pollWeather();
+    weatherTimer = setInterval(pollWeather, WEATHER_INTERVAL_MS);
+  } else {
+    state.weather = null;
+    state.weatherError = null;
+  }
 }
 
 let trailStore = createTrailStore(30);
@@ -227,6 +252,20 @@ app.get('/api/status', (_req, res) => {
   });
 });
 
+// --- Production: serve the built frontend from the same port ---------------
+// In dev, the Vite server (port 5173) hosts the UI and proxies /api + /ws here.
+// In production (Pi), we build the frontend and serve it from frontend/dist so
+// the whole app — UI, REST API, and WebSocket — lives on a single URL/port.
+if (SERVE_STATIC) {
+  app.use(express.static(DIST_DIR));
+  // SPA fallback: any non-API GET returns index.html (the WS upgrade on /ws is
+  // handled by the WebSocketServer before Express, so it never reaches here).
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api')) return next();
+    res.sendFile(join(DIST_DIR, 'index.html'));
+  });
+}
+
 const server = createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
 
@@ -275,6 +314,12 @@ async function main() {
   server.listen(PORT, () => {
     console.log(`[server] listening on http://localhost:${PORT}`);
     console.log(`[server] websocket on ws://localhost:${PORT}/ws`);
+    if (SERVE_STATIC) {
+      console.log(`[server] serving frontend from ${DIST_DIR}`);
+      console.log(`[server] open the display at http://localhost:${PORT}`);
+    } else {
+      console.log('[server] dev mode: open the Vite URL (default http://localhost:5173)');
+    }
   });
 }
 
