@@ -184,8 +184,151 @@ async function unitTests() {
 }
 
 // ---------------------------------------------------------------------------
+// Part C — API provider cache / rate-limit behavior (no network, mocked fetch)
+// ---------------------------------------------------------------------------
+async function apiProviderTests() {
+  console.log('\nPart C — API provider cache/rate-limit (mocked fetch, no network)');
+
+  const savedFetch = global.fetch;
+  const mockAc = [
+    { hex: 'abc123', flight: 'TEST1 ', lat: 32.7, lon: -96.8, alt_baro: 35000, gs: 400, track: 90 },
+  ];
+
+  // Settings with short timings for fast tests.
+  const s = (overrides = {}) => ({
+    home: { lat: 32.7767, lon: -96.797, name: 'Test' },
+    rangeNm: 60,
+    api: {
+      baseUrl: 'https://fake.test/v2',
+      pollIntervalMs:    200,  // 200 ms interval
+      rateLimitBackoffMs: 400, // 400 ms backoff
+      settingsDebounceMs: 150, // 150 ms debounce
+      ...overrides,
+    },
+  });
+
+  const { createApiProvider } = await import('../backend/aircraft/providers/apiProvider.js');
+
+  // ── Test 1: Poll interval gate ─────────────────────────────────────────────
+  // 10 rapid fetchAircraft calls must produce exactly 1 external request.
+  // After the poll interval elapses a second request is allowed.
+  {
+    let fetchCount = 0;
+    global.fetch = async () => {
+      fetchCount++;
+      return { ok: true, status: 200, json: async () => ({ ac: mockAc }) };
+    };
+
+    const p = createApiProvider();
+    const cfg = s();
+
+    // 10 sequential calls; the first blocks until the fetch completes, the rest hit cache.
+    for (let i = 0; i < 10; i++) await p.fetchAircraft(cfg);
+    await wait(50); // let background tasks settle
+    check(fetchCount === 1, `API poll: 10 rapid calls → 1 external fetch (got ${fetchCount})`);
+
+    // Past the poll interval — one more fetch should fire.
+    await wait(250);
+    await p.fetchAircraft(cfg);
+    await wait(50);
+    check(fetchCount === 2, `API poll: after ${cfg.api.pollIntervalMs}ms interval, 1 more fetch (got ${fetchCount})`);
+  }
+
+  // ── Test 2: invalidate() debounce ──────────────────────────────────────────
+  // 5 rapid invalidates must NOT trigger 5 fetches — only 1 fetch after the
+  // debounce window expires.
+  {
+    let fetchCount = 0;
+    global.fetch = async () => {
+      fetchCount++;
+      return { ok: true, status: 200, json: async () => ({ ac: mockAc }) };
+    };
+
+    const p   = createApiProvider();
+    const cfg = s({ pollIntervalMs: 30000 }); // long interval so only invalidate triggers
+
+    // Seed the cache with an initial fetch.
+    await p.fetchAircraft(cfg);
+    await wait(50);
+    const baseline = fetchCount; // should be 1
+    check(baseline === 1, `API debounce: initial fetch (baseline=${baseline})`);
+
+    // 5 rapid invalidates — each resets the debounce window to now+150ms.
+    for (let i = 0; i < 5; i++) { p.invalidate(cfg); await wait(30); } // total ~150ms
+
+    // Debounce still active (last invalidate was ≤150ms ago).
+    await p.fetchAircraft(cfg);
+    await wait(40);
+    check(fetchCount === baseline, `API debounce: no fetch while debounce active (${fetchCount})`);
+
+    // Wait past the debounce — exactly 1 new fetch should fire.
+    await wait(200);
+    await p.fetchAircraft(cfg);
+    await wait(50);
+    check(fetchCount === baseline + 1,
+      `API debounce: exactly 1 fetch after debounce settles (got ${fetchCount}, want ${baseline + 1})`);
+  }
+
+  // ── Test 3: 429 with cached data — serves cache, does not throw ────────────
+  {
+    let callIndex = 0;
+    global.fetch = async () => {
+      callIndex++;
+      if (callIndex === 1) return { ok: true, status: 200, json: async () => ({ ac: mockAc }) };
+      return { ok: false, status: 429, json: async () => ({}) };
+    };
+
+    const p   = createApiProvider();
+    const cfg = s({ pollIntervalMs: 100 });
+
+    // Seed cache.
+    await p.fetchAircraft(cfg);
+    await wait(50);
+
+    // Wait past poll interval so next fetch triggers 429.
+    await wait(150);
+
+    let threw = false;
+    let result;
+    try {
+      result = await p.fetchAircraft(cfg);
+    } catch (e) {
+      threw = true;
+    }
+    await wait(100); // let background 429 fetch settle
+
+    check(!threw,                    'API 429+cache: does not throw (cache served)');
+    check(Array.isArray(result),     'API 429+cache: returns aircraft array');
+    const meta = p.getMeta(cfg);
+    check(meta.rateLimited === true, 'API 429+cache: rateLimited flag set');
+    check(meta.hasCache === true,    'API 429+cache: cache preserved');
+  }
+
+  // ── Test 4: 429 with NO cached data — throws noCache so manager falls back ─
+  {
+    global.fetch = async () => ({ ok: false, status: 429, json: async () => ({}) });
+
+    const p   = createApiProvider();
+    const cfg = s();
+    let noCache = false;
+    try {
+      await p.fetchAircraft(cfg);
+    } catch (e) {
+      noCache = e.noCache === true;
+    }
+    check(noCache, 'API 429+nocache: throws noCache=true (triggers MOCK fallback)');
+    const meta = p.getMeta(cfg);
+    check(meta.rateLimited === true, 'API 429+nocache: rateLimited flag set');
+    check(meta.hasCache    === false,'API 429+nocache: cache still empty');
+  }
+
+  global.fetch = savedFetch;
+}
+
+// ---------------------------------------------------------------------------
 console.log(`Above Live — smoke check (port ${PORT})`);
 await integrationTests();
 await unitTests();
+await apiProviderTests();
 console.log(failed ? '\nSMOKE CHECK FAILED' : '\nSMOKE CHECK PASSED');
 process.exit(failed ? 1 : 0);

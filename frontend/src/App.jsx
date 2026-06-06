@@ -19,6 +19,7 @@ export default function App() {
   const [trails, setTrails] = useState({});
   const [layerData, setLayerData] = useState({ weather: null, satellites: [], space: null, stars: true });
   const [connectionMode, setConnectionMode] = useState('connecting');
+  const [wsApiState, setWsApiState] = useState({});
   const [panelOpen, setPanelOpen] = useState(true);
   const [tab, setTab] = useState('display'); // display | calibration | status
   const [testPattern, setTestPattern] = useState(false);
@@ -59,6 +60,12 @@ export default function App() {
         setAircraft(data.aircraft || []);
         setTrails(data.trails || {});
         if (data.layers) setLayerData(data.layers);
+        // Track API state from WS for real-time pill updates (faster than 3s status poll).
+        setWsApiState({
+          rateLimited:   data.apiRateLimited,
+          usingCache:    data.apiUsingCache,
+          usingFallback: data.usingFallback,
+        });
       },
       onConnection: setConnectionMode,
     });
@@ -108,6 +115,11 @@ export default function App() {
 
   const displayMode = settings.display.displayMode || 'normal';
 
+  // Derive real-time API state from WS (updated every second) with status fallback.
+  const usingFallback   = wsApiState.usingFallback  ?? status?.usingFallback;
+  const apiRateLimited  = !usingFallback && (wsApiState.rateLimited  ?? status?.api?.rateLimited);
+  const apiUsingCache   = !usingFallback && !apiRateLimited && (wsApiState.usingCache ?? status?.api?.usingCachedAircraft);
+
   return (
     <div className={`app mode-${displayMode}`}>
       <SkyRenderer
@@ -125,8 +137,10 @@ export default function App() {
           Above Live
         </div>
         <div className="topbar-meta">
-          {status?.usingFallback && <span className="pill warn-pill">MOCK fallback</span>}
-          <span className="pill">{(status?.effectiveProvider || settings.provider)}</span>
+          {usingFallback  && <span className="pill warn-pill">MOCK fallback</span>}
+          {apiRateLimited && <span className="pill warn-pill">API backoff</span>}
+          {apiUsingCache  && <span className="pill">cached</span>}
+          <span className="pill">{status?.effectiveProvider || settings.provider}</span>
           <span className="pill">{aircraft.length} ac</span>
           <button className="icon-btn" onClick={() => setPanelOpen((v) => !v)} title="Toggle panel">
             {panelOpen ? '✕' : '☰'}

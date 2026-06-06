@@ -65,17 +65,40 @@ export default function StatusPanel({ status, aircraftCount, connectionMode }) {
             <span className="status-val">{api.adapter || '—'}</span>
           </div>
           <div className="status-row">
-            <span className="status-key">API fetched</span>
+            <span className="status-key">Last fetch</span>
             <span className="status-val">{timeAgo(api.lastSuccess)}</span>
           </div>
           <div className="status-row">
-            <span className="status-key">Data source</span>
-            <span className="status-val">{api.cached ? 'cache (stale)' : api.hasCache ? 'live cache' : 'none'}</span>
+            <span className="status-key">Next fetch</span>
+            <span className="status-val">{timeUntil(api.nextAllowedFetch)}</span>
           </div>
+          <div className="status-row">
+            <span className="status-key">Data source</span>
+            <span className="status-val">
+              {api.rateLimited ? 'cache (backoff)' : api.usingCachedAircraft ? 'cache (stale)' : api.hasCache ? 'live' : 'none'}
+            </span>
+          </div>
+          {api.cacheAgeSeconds != null && (
+            <div className="status-row">
+              <span className="status-key">Cache age</span>
+              <span className="status-val">{api.cacheAgeSeconds}s</span>
+            </div>
+          )}
           <div className="status-row">
             <span className="status-key">Rate limit</span>
             <span className={`status-val ${api.rateLimited ? 'bad' : 'ok'}`}>
-              {api.rateLimited ? `backoff → ${timeUntil(api.nextRetry)}` : 'ok'}
+              {api.rateLimited ? `backoff ${timeUntil(api.nextRetry)}` : 'ok'}
+            </span>
+          </div>
+          <div className="status-row">
+            <span className="status-key">Ext. fetches</span>
+            <span className="status-val">{api.externalFetchCount ?? '—'} / {api.cacheHitCount ?? '—'} cache</span>
+          </div>
+          <div className="status-row">
+            <span className="status-key">Poll / backoff</span>
+            <span className="status-val">
+              {api.pollIntervalMs != null ? Math.round(api.pollIntervalMs / 1000) : '—'}s
+              {' / '}{api.backoffMs != null ? Math.round(api.backoffMs / 1000) : '—'}s
             </span>
           </div>
           {api.lastError && (

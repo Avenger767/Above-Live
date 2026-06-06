@@ -23,7 +23,13 @@ export const DEFAULT_SETTINGS = {
     brightnessMap: {},
   },
   calibration: { offsetX: 0, offsetY: 0, scale: 1, rotation: 0, flipH: false, flipV: false },
-  api: { baseUrl: 'https://api.airplanes.live/v2', apiKey: '', pollIntervalMs: 30000, rateLimitBackoffMs: 60000 },
+  api: {
+    baseUrl: 'https://api.airplanes.live/v2',
+    apiKey: '',
+    pollIntervalMs: 60000,         // external fetch interval (1 per 60 s)
+    rateLimitBackoffMs: 120000,    // backoff after 429 (2 min)
+    settingsDebounceMs: 3000,      // coalesce rapid settings saves before re-fetch
+  },
   localAdsb: { url: 'http://localhost:8080/data/aircraft.json', path: '', pollIntervalMs: 1000 },
 
   // Optional display layers. Aircraft is the mission; the rest are OFF by
@@ -63,6 +69,8 @@ function applyEnv(settings) {
   if (process.env.API_POLL_INTERVAL_MS) s.api.pollIntervalMs = Number(process.env.API_POLL_INTERVAL_MS);
   if (process.env.API_RATE_LIMIT_BACKOFF_MS)
     s.api.rateLimitBackoffMs = Number(process.env.API_RATE_LIMIT_BACKOFF_MS);
+  if (process.env.API_SETTINGS_DEBOUNCE_MS)
+    s.api.settingsDebounceMs = Number(process.env.API_SETTINGS_DEBOUNCE_MS);
   if (process.env.LOCAL_ADSB_URL) s.localAdsb.url = process.env.LOCAL_ADSB_URL;
   // Accept both LOCAL_ADSB_PATH and LOCAL_ADSB_FILE for the on-disk source.
   if (process.env.LOCAL_ADSB_PATH) s.localAdsb.path = process.env.LOCAL_ADSB_PATH;
