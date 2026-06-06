@@ -39,6 +39,8 @@ export function createApiProvider() {
   let refreshing       = null;  // in-flight fetch promise (deduplication)
   let externalFetchCount = 0;
   let cacheHitCount    = 0;
+  let lastInvalidationAt     = 0;    // ts of last invalidate() call
+  let lastInvalidationReason = null; // which settings keys forced it
 
   // ── settings helpers ───────────────────────────────────────────────────────
   const cfgPollMs     = (s) => { const v = Number(s?.api?.pollIntervalMs);     return v > 0 ? v : DEFAULT_POLL_MS;     };
@@ -156,13 +158,19 @@ export function createApiProvider() {
     throw err;
   }
 
-  // Called when settings change (home, range, provider config). Uses a debounce
-  // so rapid UI saves (range slider) are coalesced into a single re-fetch.
-  // NEVER resets lastAttempt — that would bypass the rate gate.
-  function invalidate(s) {
+  // Called when AIRCRAFT-FETCH-RELEVANT settings change (provider, home, range,
+  // api adapter/poll/backoff). The server is responsible for only calling this on
+  // real changes — display-only saves (theme, labels, glyphDebug…) must NOT call
+  // it. Uses a debounce so rapid UI saves (range slider) are coalesced into a
+  // single re-fetch. NEVER resets lastAttempt — that would bypass the rate gate.
+  function invalidate(s, reason) {
     const debounce = cfgDebounceMs(s);
     nextFetchDue = Date.now() + debounce;
-    console.log(`[api] INVAL  settings changed — next fetch in ${Math.round(debounce / 1000)}s`);
+    lastInvalidationAt = Date.now();
+    lastInvalidationReason = Array.isArray(reason) ? reason.join(', ') : (reason || 'unspecified');
+    console.log(
+      `[api] INVAL  ${lastInvalidationReason} changed — next fetch in ${Math.round(debounce / 1000)}s`
+    );
   }
 
   function getMeta(s) {
@@ -202,6 +210,8 @@ export function createApiProvider() {
       pollIntervalMs:       pollMs,
       backoffMs:            cfgBackoffMs(s),
       settingsDebounceMs:   cfgDebounceMs(s),
+      lastInvalidationAt:     lastInvalidationAt || null,
+      lastInvalidationReason: lastInvalidationReason,
       // Legacy names kept for smoke-check / StatusPanel compat
       cached:               Boolean(cache) && now - lastSuccess > pollMs + 2000,
       nextRetry:            rateLimited ? rateLimitedUntil : null,

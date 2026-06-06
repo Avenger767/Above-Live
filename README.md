@@ -128,23 +128,32 @@ panel too.
 
 API mode polls Airplanes.live every **60 seconds** — far too slow for per-second interpolation.
 Above Live detects the API provider and automatically switches to a slow-feed motion model:
-render delay 5 s, dead-reckoning up to 35 s, stale window 65 s. Aircraft move continuously
-between fetches using heading + speed rather than jumping every 60 s then freezing.
+render delay 5 s, dead-reckoning up to **70 s**, stale window **100 s**. Aircraft move
+continuously between fetches using heading + speed rather than jumping every 60 s then freezing.
+When a track has only one or two real fixes (typical on a slow feed), a short **predicted trail**
+is drawn behind it from its heading + speed so the comet tail never vanishes between fetches.
+
+> **Display tweaks don't disturb the feed.** Changing display-only settings (theme, labels,
+> trails, brightness, glyph debug, max FPS, calibration, smooth-motion toggle) no longer resets
+> the API fetch timer. Only **provider, range, home location, or API adapter/poll/backoff**
+> settings trigger a re-fetch. You can confirm this in the backend log: `[api] INVAL …` now names
+> exactly which setting forced it, and only appears for those changes.
 
 To test it:
 
 1. Switch **Provider → API** in the Display panel.
 2. Open the **Status** tab. Confirm **Motion mode: Slow API prediction** appears.
-3. Watch **Render delay: 5000 ms** and **Max extrapolation: 35 s** — these confirm the model is
-   in API mode.
+3. Watch **Render delay: 5000 ms**, **Max extrapolation: 70 s**, and **Stale timeout: 100 s** —
+   these confirm the model is in API mode.
 4. Also check **Data source** — it should show `live` once the first fetch succeeds (≤60 s).
-5. Aircraft should glide continuously across the radar — no teleporting, no 4-second freeze.
-6. Turn on **Labels → Glyph debug** (Display panel) to see each aircraft's ICAO type code and the
-   glyph class it resolved to (e.g. `B738 · airliner`). Useful for confirming classification.
-7. Switch back to **MOCK** — **Motion mode** returns to **Fast feed** and render delay drops to
-   1150 ms (visible in the Status tab).
-8. Note: **Status → Motion mode** always reflects the current effective configuration, so you can
-   confirm which mode is active without diving into settings files.
+5. Aircraft should glide continuously across the radar — no teleporting, no freeze.
+6. Toggle a few display-only controls (theme, labels, glyph debug). Watch the backend log: there
+   should be **no** `[api] INVAL` lines, and **Last invalidation** in the Status tab should not
+   advance. Then change **Range** — now you'll see one `[api] INVAL rangeNm changed …` line.
+7. Turn on **Labels → Glyph debug** to see each aircraft's ICAO type code + glyph class
+   (e.g. `B738 · airliner`). Useful for confirming classification.
+8. Switch back to **MOCK** — **Motion mode** returns to **Fast feed**, render delay drops to
+   1150 ms, and **Tracks / rendered** counts in the Status tab let you confirm aircraft are live.
 
 ---
 

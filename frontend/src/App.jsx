@@ -23,6 +23,7 @@ export default function App() {
   const [panelOpen, setPanelOpen] = useState(true);
   const [tab, setTab] = useState('display'); // display | calibration | status
   const [testPattern, setTestPattern] = useState(false);
+  const [renderStats, setRenderStats] = useState({ trackCount: 0, renderedCount: 0 });
 
   const saveTimer = useRef(null);
   const prevModeRef = useRef(settings.display.displayMode || 'normal');
@@ -76,11 +77,18 @@ export default function App() {
   }, []);
 
   // Persist a partial settings change (debounced so sliders don't spam).
+  // Guard against no-op saves: if the merged result is identical to what we
+  // already have, do nothing — no state update, no POST. This stops settings
+  // we just received from the backend (or unchanged re-toggles) from being
+  // echoed straight back, which used to reset the API fetch timer needlessly.
   const updateSettings = useCallback((patch) => {
     setSettings((prev) => {
       const next = mergeDeep(prev, patch);
+      if (deepEqual(prev, next)) return prev; // nothing materially changed
+      const changed = changedKeyPaths(prev, next);
       clearTimeout(saveTimer.current);
       saveTimer.current = setTimeout(() => {
+        if (changed.length) console.debug('[settings] saving changes:', changed.join(', '));
         api.saveSettings(next).catch(() => {});
       }, 250);
       return next;
@@ -116,6 +124,15 @@ export default function App() {
     else document.exitFullscreen?.();
   }, []);
 
+  // Render stats from the canvas (track/rendered counts). Only commit to state
+  // while the Status tab is open, so the 1 Hz updates don't re-render otherwise.
+  const handleStats = useCallback(
+    (s) => {
+      if (tab === 'status') setRenderStats(s);
+    },
+    [tab]
+  );
+
   const displayMode = settings.display.displayMode || 'normal';
 
   // Derive real-time API state from WS (updated every second) with status fallback.
@@ -131,6 +148,7 @@ export default function App() {
         trails={trails}
         layerData={layerData}
         testPattern={testPattern}
+        onStats={handleStats}
       />
 
       {/* Top bar */}
@@ -185,7 +203,13 @@ export default function App() {
             />
           )}
           {tab === 'status' && (
-            <StatusPanel status={status} aircraftCount={aircraft.length} connectionMode={connectionMode} settings={settings} />
+            <StatusPanel
+              status={status}
+              aircraftCount={aircraft.length}
+              connectionMode={connectionMode}
+              settings={settings}
+              renderStats={renderStats}
+            />
           )}
         </div>
 
@@ -205,6 +229,33 @@ function mergeDeep(base, patch) {
       out[k] = mergeDeep(out[k], v);
     } else {
       out[k] = v;
+    }
+  }
+  return out;
+}
+
+// Structural equality for plain settings objects (used to skip no-op saves).
+function deepEqual(a, b) {
+  if (a === b) return true;
+  if (a == null || b == null || typeof a !== 'object' || typeof b !== 'object') return false;
+  const ak = Object.keys(a);
+  const bk = Object.keys(b);
+  if (ak.length !== bk.length) return false;
+  return ak.every((k) => deepEqual(a[k], b[k]));
+}
+
+// Dotted paths of leaves that differ between two settings objects (for logging).
+function changedKeyPaths(a, b, prefix = '') {
+  const out = [];
+  const keys = new Set([...Object.keys(a || {}), ...Object.keys(b || {})]);
+  for (const k of keys) {
+    const pa = a ? a[k] : undefined;
+    const pb = b ? b[k] : undefined;
+    const path = prefix ? `${prefix}.${k}` : k;
+    if (pa && pb && typeof pa === 'object' && typeof pb === 'object' && !Array.isArray(pa)) {
+      out.push(...changedKeyPaths(pa, pb, path));
+    } else if (!deepEqual(pa, pb)) {
+      out.push(path);
     }
   }
   return out;

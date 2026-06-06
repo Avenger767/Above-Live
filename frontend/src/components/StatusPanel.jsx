@@ -20,7 +20,7 @@ function timeUntil(ts) {
   return s < 60 ? `${s}s` : `${Math.round(s / 60)}m`;
 }
 
-export default function StatusPanel({ status, aircraftCount, connectionMode, settings }) {
+export default function StatusPanel({ status, aircraftCount, connectionMode, settings, renderStats }) {
   const s = status || {};
   const fallback = s.usingFallback;
   const api = s.api;
@@ -28,6 +28,7 @@ export default function StatusPanel({ status, aircraftCount, connectionMode, set
   const local = s.localAdsb;
   const localActive = (s.requestedProvider || '').toUpperCase() === 'LOCAL_ADSB';
   const layers = s.layers || {};
+  const rs = renderStats || {};
 
   // Derive current motion configuration (provider-aware).
   const effMotion = effectiveMotionSettings(settings || {}).motion || {};
@@ -76,6 +77,18 @@ export default function StatusPanel({ status, aircraftCount, connectionMode, set
         <span className="status-key">Max extrapolation</span>
         <span className="status-val">{effMotion.maxExtrapolationSec ?? 4} s</span>
       </div>
+      <div className="status-row">
+        <span className="status-key">Stale timeout</span>
+        <span className="status-val">{effMotion.staleSec ?? 20} s</span>
+      </div>
+      <div className="status-row">
+        <span className="status-key">Tracks</span>
+        <span className="status-val">{rs.trackCount ?? '—'} ({rs.renderedCount ?? '—'} rendered)</span>
+      </div>
+      <div className="status-row">
+        <span className="status-key">Last save</span>
+        <span className="status-val">{timeAgo(s.lastSettingsSaveAt)}</span>
+      </div>
 
       {/* API adapter health (shown when API mode is requested) */}
       {api && apiActive && (
@@ -121,6 +134,18 @@ export default function StatusPanel({ status, aircraftCount, connectionMode, set
               {' / '}{api.backoffMs != null ? Math.round(api.backoffMs / 1000) : '—'}s
             </span>
           </div>
+          <div className="status-row">
+            <span className="status-key">Last invalidation</span>
+            <span className="status-val">{timeAgo(api.lastInvalidationAt)}</span>
+          </div>
+          {api.lastInvalidationReason && (
+            <div className="status-row">
+              <span className="status-key">Invalidation reason</span>
+              <span className="status-val" style={{ maxWidth: '60%', textAlign: 'right', wordBreak: 'break-word' }}>
+                {api.lastInvalidationReason}
+              </span>
+            </div>
+          )}
           {api.lastError && (
             <div className="status-row">
               <span className="status-key">API error</span>

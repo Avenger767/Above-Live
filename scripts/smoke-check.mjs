@@ -369,6 +369,23 @@ async function motionAndNormalizerTests() {
   motion.pruneStaleTracks(tracks, 2000 + 21000, 20000);
   check(tracks.size === 0, `pruneStaleTracks drops stale (size ${tracks.size})`);
 
+  // Provider-aware motion: API mode stretches extrapolation/stale to cover the
+  // ~60 s poll interval; MOCK/LOCAL keep the fast-feed defaults untouched.
+  const apiEff = motion.effectiveMotionSettings({ provider: 'API', motion: cfg.motion }).motion;
+  check(apiEff.maxExtrapolationSec >= 60 && apiEff.maxExtrapolationSec <= 80,
+    `API motion maxExtrapolationSec ~70 (got ${apiEff.maxExtrapolationSec})`);
+  check(apiEff.staleSec >= 90 && apiEff.staleSec <= 110,
+    `API motion staleSec ~100 (got ${apiEff.staleSec})`);
+  const mockEff = motion.effectiveMotionSettings({ provider: 'MOCK', motion: cfg.motion }).motion;
+  check(mockEff.maxExtrapolationSec === 4 && mockEff.staleSec === 20,
+    `MOCK motion keeps fast defaults (extrap ${mockEff.maxExtrapolationSec}, stale ${mockEff.staleSec})`);
+  check(motion.motionMode({ provider: 'API' }) === 'api' && motion.motionMode({ provider: 'MOCK' }) === 'fast',
+    'motionMode reports api vs fast');
+
+  // deadReckonBack walks the track backwards (where it WAS), opposite of forward.
+  const backPos = motion.deadReckonBack({ lat: 0, lon: 1 }, 90, 3600, 1); // 1 s ago, heading east
+  check(backPos.lon < 1, `deadReckonBack moves behind the aircraft (got lon ${backPos.lon.toFixed(4)})`);
+
   // --- normalizer passthrough (backward-compatible additive fields) ---
   const { normalizeAircraft } = await import('../backend/aircraft/aircraftNormalizer.js');
   const raw = {
@@ -438,11 +455,93 @@ async function migrationTests() {
 }
 
 // ---------------------------------------------------------------------------
+// Part F — settings-change relevance (which saves invalidate the API)
+// ---------------------------------------------------------------------------
+async function invalidationRelevanceTests() {
+  console.log('\nPart F — settings-change relevance (no network)');
+  const { API_RELEVANT_PATHS, POLL_RELEVANT_PATHS, changedPaths, layersChanged } =
+    await import('../backend/settings/settingsDiff.js');
+
+  const base = {
+    provider: 'API', rangeNm: 60,
+    home: { name: 'Home', lat: 32.7, lon: -96.8 },
+    updateIntervalMs: 1000,
+    display: { theme: 'night', brightness: 1, labels: true, trails: true, aircraftSize: 1, glyphDebug: false, maxFps: 30, altitudeColor: true },
+    calibration: { offsetX: 0, rotation: 0 },
+    motion: { interpolate: true },
+    api: { baseUrl: 'https://api.airplanes.live/v2', apiKey: '', pollIntervalMs: 60000, rateLimitBackoffMs: 120000, settingsDebounceMs: 3000 },
+    localAdsb: { url: 'http://localhost:8080/data/aircraft.json', path: '', pollIntervalMs: 1000 },
+    layers: { aircraft: true, weather: false, satellites: false, space: false, stars: true },
+    weather: {}, satellites: {}, space: {},
+  };
+  const clone = (o) => JSON.parse(JSON.stringify(o));
+
+  // --- display-only changes must NOT invalidate the API ---
+  const displayOnly = [
+    ['theme', (s) => { s.display.theme = 'amber'; }],
+    ['brightness', (s) => { s.display.brightness = 0.6; }],
+    ['labels', (s) => { s.display.labels = false; }],
+    ['trails', (s) => { s.display.trails = false; }],
+    ['altitudeColor', (s) => { s.display.altitudeColor = false; }],
+    ['glyphDebug', (s) => { s.display.glyphDebug = true; }],
+    ['aircraftSize', (s) => { s.display.aircraftSize = 1.5; }],
+    ['maxFps', (s) => { s.display.maxFps = 60; }],
+    ['calibration', (s) => { s.calibration.rotation = 90; }],
+    ['motion', (s) => { s.motion.interpolate = false; }],
+  ];
+  for (const [label, mutate] of displayOnly) {
+    const after = clone(base);
+    mutate(after);
+    const changed = changedPaths(base, after, API_RELEVANT_PATHS);
+    check(changed.length === 0, `display-only "${label}" does NOT invalidate API`);
+  }
+
+  // Toggling stars (a layer unrelated to aircraft fetch) must not invalidate API.
+  {
+    const after = clone(base); after.layers.stars = false;
+    check(changedPaths(base, after, API_RELEVANT_PATHS).length === 0, 'layer "stars" does NOT invalidate API');
+    check(layersChanged(base, after) === true, 'layer "stars" IS a layer change (sync layers)');
+  }
+
+  // --- aircraft-fetch-relevant changes MUST invalidate the API ---
+  {
+    const after = clone(base); after.provider = 'LOCAL_ADSB';
+    check(changedPaths(base, after, API_RELEVANT_PATHS).includes('provider'), 'provider change invalidates API');
+    check(changedPaths(base, after, POLL_RELEVANT_PATHS).includes('provider'), 'provider change restarts poll');
+  }
+  {
+    const after = clone(base); after.rangeNm = 150;
+    check(changedPaths(base, after, API_RELEVANT_PATHS).includes('rangeNm'), 'rangeNm change invalidates API');
+  }
+  {
+    const after = clone(base); after.home = { ...after.home, lat: 40.0, lon: -75.0 };
+    const ch = changedPaths(base, after, API_RELEVANT_PATHS);
+    check(ch.includes('home.lat') && ch.includes('home.lon'), 'home location change invalidates API');
+  }
+  {
+    const after = clone(base); after.api.pollIntervalMs = 90000;
+    check(changedPaths(base, after, API_RELEVANT_PATHS).includes('api.pollIntervalMs'), 'api poll change invalidates API');
+  }
+  {
+    const after = clone(base); after.api.baseUrl = 'https://example.test/v2';
+    check(changedPaths(base, after, API_RELEVANT_PATHS).includes('api.baseUrl'), 'api baseUrl change invalidates API');
+  }
+
+  // An identical save (no material change) invalidates nothing.
+  {
+    const after = clone(base);
+    check(changedPaths(base, after, API_RELEVANT_PATHS).length === 0, 'identical save does NOT invalidate API');
+    check(layersChanged(base, after) === false, 'identical save is NOT a layer change');
+  }
+}
+
+// ---------------------------------------------------------------------------
 console.log(`Above Live — smoke check (port ${PORT})`);
 await integrationTests();
 await unitTests();
 await apiProviderTests();
 await motionAndNormalizerTests();
 await migrationTests();
+await invalidationRelevanceTests();
 console.log(failed ? '\nSMOKE CHECK FAILED' : '\nSMOKE CHECK PASSED');
 process.exit(failed ? 1 : 0);

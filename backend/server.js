@@ -14,6 +14,7 @@ import { createServer } from 'node:http';
 import { WebSocketServer } from 'ws';
 
 import { loadSettings, getSettings, saveSettings, resetSettings } from './settings/settingsStore.js';
+import { API_RELEVANT_PATHS, POLL_RELEVANT_PATHS, changedPaths, layersChanged } from './settings/settingsDiff.js';
 import { createMockProvider } from './aircraft/providers/mockProvider.js';
 import { createApiProvider } from './aircraft/providers/apiProvider.js';
 import { createLocalAdsbProvider } from './aircraft/providers/localAdsbProvider.js';
@@ -48,6 +49,7 @@ const state = {
   usingFallback:     false,
   lastUpdate:        0,
   lastError:         null,
+  lastSettingsSaveAt: 0,
 };
 
 let trailStore        = createTrailStore(30);
@@ -193,12 +195,30 @@ app.get('/api/space',      (_req, res) => { const s = getSettings(); res.json({ 
 app.get('/api/settings', (_req, res) => res.json(getSettings()));
 
 app.post('/api/settings', async (req, res) => {
+  const before  = getSettings();
   const updated = await saveSettings(req.body || {});
-  // Debounce the API re-fetch so rapid slider saves don't hammer the API.
-  providers.API.invalidate?.(updated);
-  for (const key of Object.keys(layers)) layers[key].invalidate?.();
-  schedulePollRestart();
-  debouncedSyncLayers();
+  state.lastSettingsSaveAt = Date.now();
+
+  // Only reset the API fetch timer when an aircraft-fetch-relevant setting
+  // actually changed. Display-only saves (theme, labels, glyphDebug, brightness,
+  // maxFps, calibration, motion…) must NOT invalidate the API, or every UI tweak
+  // would push back the next fetch and starve the live feed.
+  const apiChanged = changedPaths(before, updated, API_RELEVANT_PATHS);
+  if (apiChanged.length) {
+    providers.API.invalidate?.(updated, apiChanged);
+  }
+
+  // Restart the poll loop only when the cadence/provider changed.
+  if (changedPaths(before, updated, POLL_RELEVANT_PATHS).length) {
+    schedulePollRestart();
+  }
+
+  // Re-sync optional layers only when a layer enable/config changed.
+  if (layersChanged(before, updated)) {
+    for (const key of Object.keys(layers)) layers[key].invalidate?.();
+    debouncedSyncLayers();
+  }
+
   res.json(updated);
 });
 
@@ -222,6 +242,7 @@ app.get('/api/status', (_req, res) => {
     aircraftCount:     state.aircraft.length,
     lastUpdate:        state.lastUpdate,
     lastError:         state.lastError,
+    lastSettingsSaveAt: state.lastSettingsSaveAt || null,
     home:    s.home,
     rangeNm: s.rangeNm,
     // Full API adapter health (valid whether or not API mode is active).
@@ -243,6 +264,8 @@ app.get('/api/status', (_req, res) => {
       pollIntervalMs:       apiMeta.pollIntervalMs,
       backoffMs:            apiMeta.backoffMs,
       settingsDebounceMs:   apiMeta.settingsDebounceMs,
+      lastInvalidationAt:     apiMeta.lastInvalidationAt,
+      lastInvalidationReason: apiMeta.lastInvalidationReason,
       // Legacy names
       cached:    apiMeta.cached,
       nextRetry: apiMeta.nextRetry,

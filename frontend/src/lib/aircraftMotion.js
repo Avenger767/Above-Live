@@ -60,6 +60,16 @@ export function deadReckonPosition(position, headingDeg, speedKt, dtSeconds) {
 }
 
 /**
+ * Dead-reckon a position BACKWARD along its track — i.e. where the aircraft was
+ * `secondsAgo` ago. Used to synthesize a predicted comet trail behind aircraft
+ * on slow feeds (API) where real history fixes are sparse.
+ * @returns {{lat:number, lon:number}}
+ */
+export function deadReckonBack(position, headingDeg, speedKt, secondsAgo) {
+  return deadReckonPosition(position, headingDeg, speedKt, -Math.abs(secondsAgo));
+}
+
+/**
  * Ease one heading toward another along the SHORTEST arc, so an aircraft
  * turning from 350° to 010° rotates +20° (through north) instead of spinning
  * -340° the long way around.
@@ -285,8 +295,8 @@ export function effectiveMotionSettings(settings) {
     motion: {
       ...m,
       renderDelayMs: 5000,       // stay inside the interpolation window
-      maxExtrapolationSec: 35,   // dead-reckon most of the 60 s poll interval
-      staleSec: 65,              // survive a full cycle without an update
+      maxExtrapolationSec: 70,   // dead-reckon across the full ~60 s poll interval
+      staleSec: 100,             // survive a full cycle (plus margin) without an update
     },
   };
 }

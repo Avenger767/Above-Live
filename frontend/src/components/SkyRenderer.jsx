@@ -42,6 +42,7 @@ import {
   staleMsFromSettings,
   renderDelayMs,
   effectiveMotionSettings,
+  deadReckonBack,
 } from '../lib/aircraftMotion.js';
 
 const WARN_RGB = [255, 90, 71]; // emergency highlight colour
@@ -65,7 +66,7 @@ function makeStars(count, w, h, seed = 1234) {
 // built from each track's own fix history in the motion model (see the trails
 // block in draw()). The prop is kept so the backend trail feed stays available
 // for future history/status features without changing this component's API.
-export default function SkyRenderer({ settings, aircraft, trails, layerData, testPattern }) {
+export default function SkyRenderer({ settings, aircraft, trails, layerData, testPattern, onStats }) {
   const canvasRef = useRef(null);
   const wrapRef = useRef(null);
   // Persistent renderer state: per-aircraft motion tracks live here so they
@@ -81,8 +82,8 @@ export default function SkyRenderer({ settings, aircraft, trails, layerData, tes
     labelBoxes: [],        // placed label rects this frame (collision avoidance)
   });
 
-  const propsRef = useRef({ settings, aircraft, trails, layerData, testPattern });
-  propsRef.current = { settings, aircraft, trails, layerData, testPattern };
+  const propsRef = useRef({ settings, aircraft, trails, layerData, testPattern, onStats });
+  propsRef.current = { settings, aircraft, trails, layerData, testPattern, onStats };
 
   const layers = settings.layers || {};
   const ld = layerData || {};
@@ -322,10 +323,19 @@ function draw(ctx, st, props, dt, nowMs) {
       ? ac.distanceNm
       : Math.hypot(p.x - center.x, p.y - center.y); // pixel fallback for sorting
 
+    // Glyph classification is stable for an aircraft — recompute only when the
+    // identifying metadata changes, not every frame (Pi-friendly).
+    const classKey = `${ac.typeCode || ac.aircraftType || ''}|${ac.category || ''}`;
+    if (tr.kindKey !== classKey) {
+      tr.kind = classifyAircraftGlyph(ac);
+      tr.kindKey = classKey;
+    }
+
     visible.push({
       tr, ac, p, pos,
       heading: tr.renderHeading,
-      kind: classifyAircraftGlyph(ac),
+      geoHdg,
+      kind: tr.kind,
       color,
       emergency,
       alpha: Math.max(0, Math.min(1, tr.life)),
@@ -333,28 +343,57 @@ function draw(ctx, st, props, dt, nowMs) {
     });
   }
 
+  // Report render stats up to the Status panel (throttled to ~1 Hz so it never
+  // adds per-frame React churn on a Pi).
+  if (props.onStats && (!st.lastStatsAt || nowMs - st.lastStatsAt > 1000)) {
+    st.lastStatsAt = nowMs;
+    props.onStats({ trackCount: st.tracks.size, renderedCount: visible.length });
+  }
+
   // Trails first (under glyphs), built from each track's real history so the
-  // tail lines up exactly with the interpolated head. Tapered + fading.
+  // tail lines up exactly with the interpolated head. Tapered + fading. On slow
+  // (API) feeds there are often only 1–2 real fixes inside the window, so we
+  // fall back to a short PREDICTED trail behind the aircraft, dead-reckoned from
+  // its heading + speed, so the comet tail never vanishes between fetches.
   if (showTrails) {
     const trailWindowMs = Math.max(5, Math.min(60, settings.trailLength || 30)) * 1000;
+    const MAX_TRAIL_SEGMENTS = 24; // cap work per aircraft (Pi-friendly)
     ctx.save();
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     for (const v of visible) {
-      const hist = v.tr.history;
-      if (!hist || hist.length < 2) continue;
-      // Polyline of fixes within the window, ending at the interpolated head.
-      const pts = [];
+      const hist = v.tr.history || [];
+      // Real history points inside the trail window.
+      let pts = [];
       for (const sfix of hist) {
         if (sfix.t < renderTime - trailWindowMs || sfix.t > renderTime) continue;
         pts.push({ p: project(sfix.lat, sfix.lon), age: (renderTime - sfix.t) / trailWindowMs });
       }
-      pts.push({ p: v.p, age: 0 });
+
+      // Sparse history (slow feed): synthesize a predicted tail behind the head
+      // by dead-reckoning backwards along the current track at ground speed.
+      if (pts.length < 2) {
+        const spd = v.ac.speed;
+        if (Number.isFinite(spd) && spd > 0 && Number.isFinite(v.geoHdg)) {
+          pts = [];
+          const STEPS = 6;
+          const spanSec = trailWindowMs / 1000;
+          for (let k = STEPS; k >= 1; k--) {
+            const back = (spanSec * k) / STEPS;            // seconds behind the head
+            const bp = deadReckonBack(v.pos, v.geoHdg, spd, back);
+            pts.push({ p: project(bp.lat, bp.lon), age: (back * 1000) / trailWindowMs });
+          }
+        }
+      }
+
+      pts.push({ p: v.p, age: 0 }); // head = interpolated/extrapolated position
       if (pts.length < 2) continue;
+      if (pts.length > MAX_TRAIL_SEGMENTS + 1) pts = pts.slice(-(MAX_TRAIL_SEGMENTS + 1));
+
       for (let i = 1; i < pts.length; i++) {
         const a = pts[i - 1];
         const b = pts[i];
-        const f = 1 - b.age; // 1 at head, 0 at tail
+        const f = 1 - Math.min(1, b.age); // 1 at head, 0 at tail
         ctx.strokeStyle = rgba(v.color, 0.5 * f * v.alpha * mc.trails);
         ctx.lineWidth = 0.7 + 2.0 * f * (size / 14);
         ctx.beginPath();
