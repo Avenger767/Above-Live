@@ -296,6 +296,55 @@ input[type="checkbox"]:checked::after { transform: translateX(18px); background:
 }
 .warn-detail { margin-top: 6px; font-family: var(--mono); font-size: 10.5px; opacity: 0.8; word-break: break-word; }
 
+/* --- Display modes --- */
+
+/* Projector + calibration: pure black so the wall only glows where there is data. */
+.mode-projector,
+.mode-projector .sky-wrap,
+.mode-calibration,
+.mode-calibration .sky-wrap {
+  background: #000 !important;
+}
+
+/* Topbar fades out so it doesn't spill light, reappears on hover. */
+.mode-projector .topbar,
+.mode-calibration .topbar {
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+.mode-projector .topbar:hover,
+.mode-calibration .topbar:hover,
+.mode-projector .topbar:focus-within,
+.mode-calibration .topbar:focus-within {
+  opacity: 1;
+}
+
+/* Panel: fully opaque so no light bleeds through it onto the wall. */
+.mode-projector .panel,
+.mode-calibration .panel {
+  background: rgba(0, 0, 0, 0.97);
+  backdrop-filter: none;
+  border-left-color: rgba(100, 140, 200, 0.25);
+}
+
+/* Layer corner cards: solid black, no blur, so they don't glow through. */
+.mode-projector .layer-card,
+.mode-calibration .layer-card {
+  background: rgba(0, 0, 0, 0.94);
+  border-color: rgba(120, 160, 220, 0.35);
+  backdrop-filter: none;
+}
+
+/* Ambient: topbar dimmed; everything else through canvas alpha. */
+.mode-ambient .topbar {
+  opacity: 0.55;
+  transition: opacity 0.3s;
+}
+.mode-ambient .topbar:hover,
+.mode-ambient .topbar:focus-within {
+  opacity: 1;
+}
+
 /* --- Small screens --- */
 @media (max-width: 560px) {
   .panel { width: 100%; max-width: 100%; }

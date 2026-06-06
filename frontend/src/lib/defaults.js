@@ -8,7 +8,11 @@ export const DEFAULT_SETTINGS = {
   rangeNm: 60,
   updateIntervalMs: 1000,
   trailLength: 30,
-  display: { theme: 'night', brightness: 1, labels: true, trails: true, aircraftSize: 1 },
+  display: {
+    theme: 'night', brightness: 1, labels: true, trails: true, aircraftSize: 1,
+    displayMode: 'normal',
+    brightnessMap: {},
+  },
   calibration: { offsetX: 0, offsetY: 0, scale: 1, rotation: 0, flipH: false, flipV: false },
   api: { baseUrl: 'https://api.airplanes.live/v2', apiKey: '', pollIntervalMs: 30000, rateLimitBackoffMs: 60000 },
   localAdsb: { url: 'http://localhost:8080/data/aircraft.json', path: '', pollIntervalMs: 1000 },

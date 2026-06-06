@@ -3,7 +3,7 @@
 // (Display, Calibration, Status). Loads settings + status from the backend,
 // subscribes to the live aircraft feed, and persists setting changes.
 
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import SkyRenderer from './components/SkyRenderer.jsx';
 import ControlPanel from './components/ControlPanel.jsx';
 import CalibrationPanel from './components/CalibrationPanel.jsx';
@@ -24,6 +24,7 @@ export default function App() {
   const [testPattern, setTestPattern] = useState(false);
 
   const saveTimer = useRef(null);
+  const prevModeRef = useRef(settings.display.displayMode || 'normal');
 
   // Initial load of settings.
   useEffect(() => {
@@ -76,6 +77,16 @@ export default function App() {
     });
   }, []);
 
+  // Auto-close the panel when switching to projector or calibration mode —
+  // both are designed to be unobstructed.
+  useEffect(() => {
+    const mode = settings.display.displayMode || 'normal';
+    if (mode !== prevModeRef.current) {
+      prevModeRef.current = mode;
+      if (mode === 'projector' || mode === 'calibration') setPanelOpen(false);
+    }
+  }, [settings.display.displayMode]);
+
   const handleReset = useCallback(async () => {
     try {
       const fresh = await api.resetSettings();
@@ -95,8 +106,10 @@ export default function App() {
     else document.exitFullscreen?.();
   }, []);
 
+  const displayMode = settings.display.displayMode || 'normal';
+
   return (
-    <div className="app">
+    <div className={`app mode-${displayMode}`}>
       <SkyRenderer
         settings={settings}
         aircraft={aircraft}

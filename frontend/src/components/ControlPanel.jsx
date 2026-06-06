@@ -4,11 +4,10 @@
 
 import React from 'react';
 import { THEMES, THEME_KEYS } from '../lib/themes.js';
+import { DISPLAY_MODES, DISPLAY_MODE_KEYS } from '../lib/displayModes.js';
 
 const PROVIDERS = ['MOCK', 'API', 'LOCAL_ADSB'];
 
-// Optional display layers. Aircraft is the mission and is always on, so it's
-// shown as a fixed (disabled) row rather than a toggle you can switch off.
 const LAYER_TOGGLES = [
   { key: 'stars', label: 'Stars' },
   { key: 'weather', label: 'Weather' },
@@ -16,12 +15,25 @@ const LAYER_TOGGLES = [
   { key: 'space', label: 'Space / Planets' },
 ];
 
+// Individual element brightness sliders shown only in projector mode.
+const BRIGHTNESS_ELEMENTS = [
+  { key: 'aircraft', label: 'Aircraft' },
+  { key: 'labels', label: 'Labels' },
+  { key: 'trails', label: 'Trails' },
+  { key: 'rings', label: 'Rings' },
+  { key: 'stars', label: 'Stars' },
+  { key: 'satellites', label: 'Satellites' },
+];
+
 export default function ControlPanel({ settings, onChange, onToggleFullscreen, onReset, onOpenCalibration }) {
   const d = settings.display;
   const layers = settings.layers || {};
+  const bm = d.brightnessMap || {};
 
   const setDisplay = (patch) => onChange({ display: { ...d, ...patch } });
   const setLayer = (key, value) => onChange({ layers: { ...layers, [key]: value } });
+  const setBrightnessMap = (key, val) =>
+    setDisplay({ brightnessMap: { ...bm, [key]: val } });
 
   return (
     <div className="panel-section">
@@ -31,9 +43,7 @@ export default function ControlPanel({ settings, onChange, onToggleFullscreen, o
         <span>Provider</span>
         <select value={settings.provider} onChange={(e) => onChange({ provider: e.target.value })}>
           {PROVIDERS.map((p) => (
-            <option key={p} value={p}>
-              {p}
-            </option>
+            <option key={p} value={p}>{p}</option>
           ))}
         </select>
       </label>
@@ -42,9 +52,7 @@ export default function ControlPanel({ settings, onChange, onToggleFullscreen, o
         <span>Range</span>
         <select value={settings.rangeNm} onChange={(e) => onChange({ rangeNm: Number(e.target.value) })}>
           {[20, 40, 60, 100, 150, 250].map((r) => (
-            <option key={r} value={r}>
-              {r} nm
-            </option>
+            <option key={r} value={r}>{r} nm</option>
           ))}
         </select>
       </label>
@@ -52,12 +60,19 @@ export default function ControlPanel({ settings, onChange, onToggleFullscreen, o
       <h3>Display</h3>
 
       <label className="field">
+        <span>Mode</span>
+        <select value={d.displayMode || 'normal'} onChange={(e) => setDisplay({ displayMode: e.target.value })}>
+          {DISPLAY_MODE_KEYS.map((k) => (
+            <option key={k} value={k}>{DISPLAY_MODES[k].label}</option>
+          ))}
+        </select>
+      </label>
+
+      <label className="field">
         <span>Theme</span>
         <select value={d.theme} onChange={(e) => setDisplay({ theme: e.target.value })}>
           {THEME_KEYS.map((k) => (
-            <option key={k} value={k}>
-              {THEMES[k].label}
-            </option>
+            <option key={k} value={k}>{THEMES[k].label}</option>
           ))}
         </select>
       </label>
@@ -65,10 +80,7 @@ export default function ControlPanel({ settings, onChange, onToggleFullscreen, o
       <label className="field">
         <span>Brightness</span>
         <input
-          type="range"
-          min="0.3"
-          max="1"
-          step="0.05"
+          type="range" min="0.3" max="1" step="0.05"
           value={d.brightness}
           onChange={(e) => setDisplay({ brightness: Number(e.target.value) })}
         />
@@ -77,10 +89,7 @@ export default function ControlPanel({ settings, onChange, onToggleFullscreen, o
       <label className="field">
         <span>Aircraft size</span>
         <input
-          type="range"
-          min="0.5"
-          max="2.5"
-          step="0.1"
+          type="range" min="0.5" max="2.5" step="0.1"
           value={d.aircraftSize}
           onChange={(e) => setDisplay({ aircraftSize: Number(e.target.value) })}
         />
@@ -95,6 +104,24 @@ export default function ControlPanel({ settings, onChange, onToggleFullscreen, o
         <span>Trails</span>
         <input type="checkbox" checked={d.trails} onChange={(e) => setDisplay({ trails: e.target.checked })} />
       </label>
+
+      {/* Per-element brightness controls — projector mode only */}
+      {d.displayMode === 'projector' && (
+        <>
+          <h3>Projector Levels</h3>
+          <p className="field-hint">Fine-tune each element for your projector and room.</p>
+          {BRIGHTNESS_ELEMENTS.map(({ key, label }) => (
+            <label className="field" key={key}>
+              <span>{label}</span>
+              <input
+                type="range" min="0" max="1" step="0.05"
+                value={bm[key] ?? 1}
+                onChange={(e) => setBrightnessMap(key, Number(e.target.value))}
+              />
+            </label>
+          ))}
+        </>
+      )}
 
       <h3>Layers</h3>
 
@@ -117,17 +144,11 @@ export default function ControlPanel({ settings, onChange, onToggleFullscreen, o
       </p>
 
       <div className="btn-row">
-        <button className="btn" onClick={onToggleFullscreen}>
-          Fullscreen
-        </button>
-        <button className="btn" onClick={onOpenCalibration}>
-          Calibration
-        </button>
+        <button className="btn" onClick={onToggleFullscreen}>Fullscreen</button>
+        <button className="btn" onClick={onOpenCalibration}>Calibration</button>
       </div>
 
-      <button className="btn btn-danger" onClick={onReset}>
-        Reset all settings
-      </button>
+      <button className="btn btn-danger" onClick={onReset}>Reset all settings</button>
     </div>
   );
 }
