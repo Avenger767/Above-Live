@@ -29,6 +29,7 @@
     "flipV": false
   },
   "api": {
+    "adapter": "airplaneslive",
     "baseUrl": "",
     "apiKey": ""
   },

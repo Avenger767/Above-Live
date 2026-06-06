@@ -27,6 +27,13 @@ export default function ControlPanel({ settings, onChange, onToggleFullscreen, o
         </select>
       </label>
 
+      {settings.provider === 'API' && (
+        <div className="hint">
+          Adapter: <b>{settings.api?.adapter || 'airplaneslive'}</b>
+          {' — '}set <code>PROVIDER=API</code> in <code>backend/.env</code> to activate.
+        </div>
+      )}
+
       <label className="field">
         <span>Range</span>
         <select value={settings.rangeNm} onChange={(e) => onChange({ rangeNm: Number(e.target.value) })}>

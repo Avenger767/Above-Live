@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 
 import { loadSettings, getSettings, saveSettings, resetSettings } from './settings/settingsStore.js';
 import { createMockProvider } from './aircraft/providers/mockProvider.js';
-import { createApiProvider } from './aircraft/providers/apiProvider.js';
+import { createApiProvider, getAdapterInfo } from './aircraft/providers/apiProvider.js';
 import { createLocalAdsbProvider } from './aircraft/providers/localAdsbProvider.js';
 import { createTrailStore } from './aircraft/trailStore.js';
 import { createSpaceProvider } from './space/spaceProvider.js';
@@ -241,6 +241,8 @@ app.get('/api/status', (_req, res) => {
     lastError: state.lastError,
     home: settings.home,
     rangeNm: settings.rangeNm,
+    // API adapter info (relevant when provider is API).
+    api: getAdapterInfo(settings),
     // Overlay layer health.
     spaceCount: state.space.length,
     spaceError: state.spaceError,
@@ -250,6 +252,50 @@ app.get('/api/status', (_req, res) => {
     weatherCondition: state.weather?.condition || null,
     lastWeatherUpdate: state.lastWeatherUpdate,
   });
+});
+
+// One-shot connectivity test against the configured API adapter.
+// Returns success/failure without altering the live data stream.
+app.get('/api/provider-test', async (_req, res) => {
+  const settings = getSettings();
+  const info = getAdapterInfo(settings);
+
+  if (!info.configured) {
+    return res.json({
+      success: false,
+      adapter: info.adapter,
+      adapterLabel: info.adapterLabel,
+      configured: false,
+      aircraftCount: 0,
+      sample: [],
+      error: info.requiresKey
+        ? 'API_KEY is required for this adapter but was not set.'
+        : 'API_BASE_URL is required for this adapter but was not set.',
+    });
+  }
+
+  try {
+    const aircraft = await providers.API.fetchAircraft(settings);
+    res.json({
+      success: true,
+      adapter: info.adapter,
+      adapterLabel: info.adapterLabel,
+      configured: true,
+      aircraftCount: aircraft.length,
+      sample: aircraft.slice(0, 3),
+      error: null,
+    });
+  } catch (err) {
+    res.json({
+      success: false,
+      adapter: info.adapter,
+      adapterLabel: info.adapterLabel,
+      configured: true,
+      aircraftCount: 0,
+      sample: [],
+      error: err.message,
+    });
+  }
 });
 
 // --- Production: serve the built frontend from the same port ---------------

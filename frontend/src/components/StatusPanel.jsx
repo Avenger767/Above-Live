@@ -16,6 +16,8 @@ function timeAgo(ts) {
 export default function StatusPanel({ status, aircraftCount, connectionMode }) {
   const s = status || {};
   const fallback = s.usingFallback;
+  const isApi = (s.requestedProvider || '').toUpperCase() === 'API';
+  const api = s.api || {};
 
   return (
     <div className="status">
@@ -33,6 +35,25 @@ export default function StatusPanel({ status, aircraftCount, connectionMode }) {
         <span className="status-key">Requested</span>
         <span className="status-val">{s.requestedProvider || '—'}</span>
       </div>
+
+      {/* API adapter rows — only when API is the requested provider */}
+      {isApi && api.adapterLabel && (
+        <div className="status-row">
+          <span className="status-key">Adapter</span>
+          <span className="status-val">{api.adapterLabel}</span>
+        </div>
+      )}
+      {isApi && (
+        <div className="status-row">
+          <span className="status-key">API key</span>
+          <span className={`status-val ${api.configured ? 'ok' : api.requiresKey ? 'bad' : ''}`}>
+            {api.requiresKey
+              ? api.configured ? 'set' : 'missing'
+              : 'not required'}
+          </span>
+        </div>
+      )}
+
       <div className="status-row">
         <span className="status-key">Aircraft</span>
         <span className="status-val">{aircraftCount ?? s.aircraftCount ?? 0}</span>

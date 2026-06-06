@@ -231,30 +231,78 @@ Three ways:
 If the chosen provider can't get data, the **Status** tab shows a "MOCK fallback" warning and the
 display keeps running on mock data.
 
-### 11a. Later: connect an internet flight API
+### 11a. Connect a real internet flight API
 
-1. Copy the env template and add your details:
-   ```bash
-   cd backend
-   cp .env.example .env
-   ```
-   Then set in `.env`:
-   ```
-   PROVIDER=API
-   API_BASE_URL=https://your-flight-api.example.com
-   API_KEY=your_key_here
-   ```
-2. Open **`backend/aircraft/providers/apiProvider.js`** and adjust two things to match your
-   chosen service:
-   - the request URL/headers, and
-   - the line that picks the aircraft array out of the response
-     (`data.aircraft || data.states || ...`).
-3. Every record is run through `aircraftNormalizer.js`, which already maps common field names
-   (`lat/latitude`, `gs/groundspeed/velocity`, `track/heading`, `alt_baro/altitude`, etc.) into
-   the internal format. If your API uses different names, add them there.
-4. If the key/URL is missing or the request fails, Above Live falls back to MOCK automatically.
+The API provider uses an **adapter** system. Four adapters are included:
 
-No paid API is hardcoded — you choose the provider.
+| Adapter | `API_PROVIDER=` | Free? | Key needed? |
+|---------|-----------------|-------|-------------|
+| **Airplanes.live** | `airplaneslive` | Yes | No |
+| **OpenSky Network** | `opensky` | Yes (rate-limited) | No (optional) |
+| **ADS-B Exchange** | `adsbexchange` | RapidAPI plan | Yes |
+| **Generic REST** | `generic` | Up to your API | Optional |
+
+**Quickest start — Airplanes.live (free, no key):**
+
+```bash
+cd backend
+cp .env.example .env
+```
+
+Then set in `.env`:
+```
+PROVIDER=API
+# API_PROVIDER=airplaneslive  ← this is already the default, no need to set
+```
+
+Restart the backend and run the connectivity test:
+
+```bash
+curl http://localhost:4000/api/provider-test
+```
+
+Expected when working:
+```json
+{ "success": true, "adapter": "airplaneslive", "adapterLabel": "Airplanes.live",
+  "configured": true, "aircraftCount": 45, "sample": [...], "error": null }
+```
+
+**OpenSky Network (free anonymous):**
+```
+PROVIDER=API
+API_PROVIDER=opensky
+# Optional — free account raises rate limits:
+# API_KEY=youruser:yourpassword
+```
+
+**ADS-B Exchange (RapidAPI key):**
+```
+PROVIDER=API
+API_PROVIDER=adsbexchange
+API_KEY=your_rapidapi_key_here
+```
+
+**Generic REST API:**
+```
+PROVIDER=API
+API_PROVIDER=generic
+API_BASE_URL=https://your-flight-api.example.com
+API_KEY=your_bearer_token_here   # optional
+```
+
+You can also override home location and range without editing `settings.json`:
+```
+HOME_LAT=51.5074
+HOME_LON=-0.1278
+RANGE_NM=80
+```
+
+Every record is run through `aircraftNormalizer.js`, which already maps common field names
+(`lat/latitude`, `gs/groundspeed/velocity`, `track/heading`, `alt_baro/altitude`, etc.) into
+the internal format. If your API uses different field names, add them there.
+
+If configuration is missing or the request fails, Above Live falls back to MOCK automatically and
+shows a warning in the Status panel.
 
 ### 11b. Later: connect dump1090 / readsb (`aircraft.json`)
 
@@ -329,7 +377,8 @@ above-live/
 | GET    | `/api/settings`        | Current settings                                |
 | POST   | `/api/settings`        | Update settings (partial, deep-merged)          |
 | POST   | `/api/settings/reset`  | Reset settings to defaults                      |
-| GET    | `/api/status`          | Provider, counts, fallback state, health        |
+| GET    | `/api/status`          | Provider, counts, API adapter info, health      |
+| GET    | `/api/provider-test`   | One-shot API connectivity test (non-destructive)|
 | WS     | `/ws`                  | Live aircraft stream                            |
 
 (`/api/space` and `/api/weather` also exist but return empty data while those optional layers are

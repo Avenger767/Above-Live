@@ -11,6 +11,6 @@ export const DEFAULT_SETTINGS = {
   display: { theme: 'night', brightness: 1, labels: true, trails: true, aircraftSize: 1 },
   layers: { aircraft: true, satellites: false, weather: false },
   calibration: { offsetX: 0, offsetY: 0, scale: 1, rotation: 0, flipH: false, flipV: false },
-  api: { baseUrl: '', apiKey: '' },
+  api: { adapter: 'airplaneslive', baseUrl: '', apiKey: '' },
   localAdsb: { url: 'http://localhost:8080/data/aircraft.json', path: '' },
 };
