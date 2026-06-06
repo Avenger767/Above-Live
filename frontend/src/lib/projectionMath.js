@@ -53,3 +53,46 @@ export function projectHeading(headingDeg, calibration) {
 export function isValidTheme(name) {
   return THEME_KEYS.includes(name);
 }
+
+// ---------------------------------------------------------------------------
+// Calibration helpers — kept here so all projection/calibration math lives in
+// one file (per project convention) rather than scattered across components.
+// ---------------------------------------------------------------------------
+
+const CALIBRATION_DEFAULTS = {
+  offsetX: 0, offsetY: 0, scale: 1, rotation: 0, flipH: false, flipV: false,
+};
+
+// Merge a settings.calibration object onto safe defaults so a partial/missing
+// calibration never produces NaNs in the projector.
+export function getCalibration(settings) {
+  return { ...CALIBRATION_DEFAULTS, ...((settings && settings.calibration) || {}) };
+}
+
+// Independent label rotation (radians). Lets text read upright from where the
+// viewer lies without rotating the whole field. Looks first at
+// display.labelRotationDeg, then calibration.labelRotationDeg, else 0.
+export function labelRotationRad(settings) {
+  const d = (settings && settings.display) || {};
+  const c = (settings && settings.calibration) || {};
+  const deg = Number.isFinite(d.labelRotationDeg)
+    ? d.labelRotationDeg
+    : Number.isFinite(c.labelRotationDeg)
+      ? c.labelRotationDeg
+      : 0;
+  return (deg * Math.PI) / 180;
+}
+
+// A sensible starting point for a ceiling-mounted projector aimed straight up:
+// mirror horizontally (so east/west read correctly when you look up at the
+// ceiling) and reset offset/scale/rotation. The user can fine-tune from here.
+export function ceilingPreset() {
+  return { offsetX: 0, offsetY: 0, scale: 1, rotation: 0, flipH: true, flipV: false };
+}
+
+// Squawk codes that mark an emergency (hijack / radio failure / general).
+export const EMERGENCY_SQUAWKS = new Set(['7500', '7600', '7700']);
+
+export function isEmergencySquawk(squawk) {
+  return squawk != null && EMERGENCY_SQUAWKS.has(String(squawk));
+}

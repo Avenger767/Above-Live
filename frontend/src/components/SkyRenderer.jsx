@@ -1,16 +1,49 @@
 // Above Live — SkyRenderer.
 // Canvas-based sky / radar display. Draws a starfield, radar rings, compass,
-// fading trails, and heading-rotated aircraft glyphs with labels.
-// Display modes (projector / radar / ambient / calibration) are applied via
-// getModeConfig, which returns per-element alpha values and render flags.
+// fading comet trails, and heading-rotated, type-aware aircraft glyphs with
+// labels. Display modes (projector / radar / ambient / calibration) are applied
+// via getModeConfig, which returns per-element alpha values and render flags.
+//
+// Motion: instead of drawing each once-per-second snapshot directly (which
+// makes planes "snap"), every fix is stamped with its arrival time and pushed
+// to a per-aircraft history (frontend/src/lib/aircraftMotion.js). We render the
+// world slightly in the past and interpolate between known fixes, so motion is
+// smooth and never guesses. Performance is bounded by a maxFps cap so the loop
+// stays light on a Raspberry Pi 4.
 
 import React, { useEffect, useRef } from 'react';
 import { getTheme } from '../lib/themes.js';
 import { getModeConfig } from '../lib/displayModes.js';
-import { makeProjector, projectHeading } from '../lib/projectionMath.js';
-import { drawAircraft } from '../lib/aircraftSymbols.js';
+import {
+  makeProjector,
+  projectHeading,
+  getCalibration,
+  labelRotationRad,
+  isEmergencySquawk,
+} from '../lib/projectionMath.js';
+import {
+  classifyAircraftGlyph,
+  GLYPH_SCALE,
+  drawAircraftShape,
+  altitudeRamp,
+  parseColorToRgb,
+  rgba,
+  glyphSeed,
+} from '../lib/aircraftSymbols.js';
 import { drawSatellite, drawWindArrow } from '../lib/layerSymbols.js';
 import { WeatherCard, SpaceCard } from './LayerCards.jsx';
+import {
+  updateAircraftTracks,
+  sampleAircraftTrack,
+  sampleTrackHeading,
+  smoothHeading,
+  pruneStaleTracks,
+  updateTrackLife,
+  staleMsFromSettings,
+  renderDelayMs,
+} from '../lib/aircraftMotion.js';
+
+const WARN_RGB = [255, 90, 71]; // emergency highlight colour
 
 function makeStars(count, w, h, seed = 1234) {
   let s = seed;
@@ -29,7 +62,18 @@ function makeStars(count, w, h, seed = 1234) {
 export default function SkyRenderer({ settings, aircraft, trails, layerData, testPattern }) {
   const canvasRef = useRef(null);
   const wrapRef = useRef(null);
-  const stateRef = useRef({ rendered: new Map(), stars: [], w: 0, h: 0 });
+  // Persistent renderer state: per-aircraft motion tracks live here so they
+  // survive React re-renders.
+  const stateRef = useRef({
+    tracks: new Map(),
+    stars: [],
+    w: 0,
+    h: 0,
+    lastAircraftRef: null, // identity of the last ingested aircraft array
+    nextFrameDue: 0,       // schedule anchor for the maxFps cap
+    frameT: 0,             // current frame time (s), animates props/rotors
+    labelBoxes: [],        // placed label rects this frame (collision avoidance)
+  });
 
   const propsRef = useRef({ settings, aircraft, trails, layerData, testPattern });
   propsRef.current = { settings, aircraft, trails, layerData, testPattern };
@@ -64,10 +108,29 @@ export default function SkyRenderer({ settings, aircraft, trails, layerData, tes
     resize();
 
     function frame(now) {
+      raf = requestAnimationFrame(frame);
+
+      // --- maxFps cap (Raspberry Pi friendly) ---
+      // 0 = uncapped (draw every rAF tick). Otherwise advance a running "due"
+      // time by whole frame intervals so cadence is even and skips whole frames
+      // rather than doing pointless redraws.
+      const st = stateRef.current;
+      const fps = Number(propsRef.current.settings?.display?.maxFps);
+      if (Number.isFinite(fps) && fps > 0) {
+        const interval = 1000 / fps;
+        if (st.nextFrameDue === 0) st.nextFrameDue = now;
+        if (now < st.nextFrameDue) return; // not due yet — skip this tick
+        st.nextFrameDue += interval;
+        // If we've fallen >1 frame behind (tab backgrounded / a slow draw),
+        // resync so we don't burst a pile of catch-up frames.
+        if (now - st.nextFrameDue > interval) st.nextFrameDue = now + interval;
+      } else {
+        st.nextFrameDue = 0;
+      }
+
       const dt = Math.min(0.1, (now - lastFrame) / 1000);
       lastFrame = now;
-      draw(ctx, stateRef.current, propsRef.current, dt);
-      raf = requestAnimationFrame(frame);
+      draw(ctx, st, propsRef.current, dt, now);
     }
     raf = requestAnimationFrame(frame);
 
@@ -87,12 +150,27 @@ export default function SkyRenderer({ settings, aircraft, trails, layerData, tes
 }
 
 // ---------------------------------------------------------------------------
+// Motion ingest: fold a fresh aircraft snapshot into the track store, but only
+// when the array reference actually changed (App passes a new array each WS
+// tick). Sampling/interpolation happens every frame regardless.
+// ---------------------------------------------------------------------------
+function ingestIfNew(st, settings, aircraft, now) {
+  if (aircraft && aircraft !== st.lastAircraftRef) {
+    updateAircraftTracks(st.tracks, aircraft, now, settings);
+    st.lastAircraftRef = aircraft;
+  }
+  pruneStaleTracks(st.tracks, now, staleMsFromSettings(settings));
+}
+
+// ---------------------------------------------------------------------------
 // Drawing
 // ---------------------------------------------------------------------------
-function draw(ctx, st, props, dt) {
-  const { settings, aircraft, trails, layerData, testPattern } = props;
+function draw(ctx, st, props, dt, nowMs) {
+  const { settings, aircraft, layerData, testPattern } = props;
   const { w, h } = st;
   if (!w || !h) return;
+
+  st.frameT = nowMs / 1000;
 
   const theme = getTheme(settings.display.theme);
   const brightness = settings.display.brightness ?? 1;
@@ -103,9 +181,15 @@ function draw(ctx, st, props, dt) {
   const center = { x: w / 2, y: h / 2 };
   const radiusPx = Math.min(w, h) / 2 - Math.min(w, h) * 0.06;
   const rangeNm = settings.rangeNm || 60;
-  const cal = settings.calibration || {};
+  const cal = getCalibration(settings);
   const layers = settings.layers || {};
   const ld = layerData || {};
+
+  // Always keep the motion model fed + pruned, even in calibration mode, so the
+  // sample aircraft in the debug overlay move smoothly too.
+  const now = nowMs;
+  ingestIfNew(st, settings, aircraft, now);
+  updateTrackLife(st.tracks, now, dt, settings);
 
   // --- Background ---
   if (mc.solidBlack) {
@@ -187,96 +271,260 @@ function draw(ctx, st, props, dt) {
   ctx.fill();
   ctx.restore();
 
-  // --- Calibration test pattern ---
+  const project = makeProjector({ home: settings.home, rangeNm, center, radiusPx, calibration: cal });
+
+  // --- Calibration test pattern / debug overlay ---
   if (testPattern || mc.isCalibration) {
     drawTestPattern(ctx, w, h, center, radiusPx, theme, brightness);
+    drawCalibrationHud(ctx, st, settings, project, center, radiusPx, theme, brightness, now);
     return;
   }
 
-  // --- Aircraft + trails ---
-  const project = makeProjector({ home: settings.home, rangeNm, center, radiusPx, calibration: cal });
+  // --- Aircraft (motion-interpolated) ---
+  const altColorOn = settings.display.altitudeColor !== false;
+  const highlightEmergency = settings.display.highlightEmergency !== false;
+  const baseRgb = parseColorToRgb(theme.aircraft);
   const size = 14 * (settings.display.aircraftSize ?? 1);
   const showLabels = settings.display.labels !== false;
   const showTrails = settings.display.trails !== false;
-  const labelFont    = `bold ${mc.labelSize}px ui-monospace, Menlo, Consolas, monospace`;
-  const labelDimFont = `${mc.labelDimSize}px ui-monospace, Menlo, Consolas, monospace`;
+  const renderTime = now - renderDelayMs(settings);
+  const headingK = Math.min(1, dt * 5); // frame-rate-aware heading ease
 
-  // Smoothly ease rendered positions toward reported positions.
-  const seen = new Set();
-  const lerpK = Math.min(1, dt * 6);
-  for (const ac of aircraft || []) {
-    seen.add(ac.id);
-    let r = st.rendered.get(ac.id);
-    if (!r) {
-      r = { lat: ac.lat, lon: ac.lon };
-      st.rendered.set(ac.id, r);
-    } else {
-      r.lat += (ac.lat - r.lat) * lerpK;
-      r.lon += (ac.lon - r.lon) * lerpK;
-    }
+  // Build the visible set: sample each track at renderTime, project, classify,
+  // colour, and fade. Cull anything off-screen.
+  const visible = [];
+  for (const tr of st.tracks.values()) {
+    const pos = sampleAircraftTrack(tr, renderTime, settings);
+    if (!pos) continue;
+    const p = project(pos.lat, pos.lon);
+    if (p.x < -60 || p.x > w + 60 || p.y < -60 || p.y > h + 60) continue;
+
+    // Heading: derive from motion, project through calibration, then ease.
+    const geoHdg = sampleTrackHeading(tr, renderTime, settings);
+    const projHdg = projectHeading(geoHdg, cal);
+    tr.renderHeading = smoothHeading(tr.renderHeading, projHdg, headingK);
+
+    const ac = tr.ac;
+    const alt = ac.altitude ?? 0;
+    const emergency = highlightEmergency && isEmergencySquawk(ac.squawk);
+    const color = emergency ? WARN_RGB : altColorOn ? altitudeRamp(alt) : baseRgb;
+    const dist = Number.isFinite(ac.distanceNm)
+      ? ac.distanceNm
+      : Math.hypot(p.x - center.x, p.y - center.y); // pixel fallback for sorting
+
+    visible.push({
+      tr, ac, p, pos,
+      heading: tr.renderHeading,
+      kind: classifyAircraftGlyph(ac),
+      color,
+      emergency,
+      alpha: Math.max(0, Math.min(1, tr.life)),
+      dist,
+    });
   }
-  for (const id of [...st.rendered.keys()]) if (!seen.has(id)) st.rendered.delete(id);
 
-  // Trails first (under the glyphs).
-  if (showTrails && trails) {
+  // Trails first (under glyphs), built from each track's real history so the
+  // tail lines up exactly with the interpolated head. Tapered + fading.
+  if (showTrails) {
+    const trailWindowMs = Math.max(5, Math.min(60, settings.trailLength || 30)) * 1000;
     ctx.save();
-    ctx.lineWidth = 1.6;
-    for (const ac of aircraft || []) {
-      const pts = trails[ac.id];
-      if (!pts || pts.length < 2) continue;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    for (const v of visible) {
+      const hist = v.tr.history;
+      if (!hist || hist.length < 2) continue;
+      // Polyline of fixes within the window, ending at the interpolated head.
+      const pts = [];
+      for (const sfix of hist) {
+        if (sfix.t < renderTime - trailWindowMs || sfix.t > renderTime) continue;
+        pts.push({ p: project(sfix.lat, sfix.lon), age: (renderTime - sfix.t) / trailWindowMs });
+      }
+      pts.push({ p: v.p, age: 0 });
+      if (pts.length < 2) continue;
       for (let i = 1; i < pts.length; i++) {
-        const a = project(pts[i - 1].lat, pts[i - 1].lon);
-        const b = project(pts[i].lat, pts[i].lon);
-        const fade = i / pts.length;
-        ctx.strokeStyle = theme.trail;
-        ctx.globalAlpha = fade * 0.55 * mc.trails;
+        const a = pts[i - 1];
+        const b = pts[i];
+        const f = 1 - b.age; // 1 at head, 0 at tail
+        ctx.strokeStyle = rgba(v.color, 0.5 * f * v.alpha * mc.trails);
+        ctx.lineWidth = 0.7 + 2.0 * f * (size / 14);
         ctx.beginPath();
-        ctx.moveTo(a.x, a.y);
-        ctx.lineTo(b.x, b.y);
+        ctx.moveTo(a.p.x, a.p.y);
+        ctx.lineTo(b.p.x, b.p.y);
         ctx.stroke();
       }
     }
     ctx.restore();
   }
 
-  // Aircraft glyphs + labels.
-  ctx.save();
-  for (const ac of aircraft || []) {
-    const r = st.rendered.get(ac.id);
-    const p = project(r.lat, r.lon);
-    if (p.x < -60 || p.x > w + 60 || p.y < -60 || p.y > h + 60) continue;
+  // Glyphs (nearest painted last → on top).
+  const farthestFirst = [...visible].sort((a, b) => b.dist - a.dist);
+  for (const v of farthestFirst) {
+    const s = size * (GLYPH_SCALE[v.kind] || 1);
+    ctx.save();
+    ctx.globalAlpha = mc.aircraft * v.alpha;
+    ctx.translate(v.p.x, v.p.y);
+    ctx.rotate((v.heading * Math.PI) / 180);
+    if (v.emergency) {
+      // Subtle warning ring behind the glyph (gentle pulse).
+      const pulse = 0.35 + 0.25 * (0.5 + 0.5 * Math.sin(st.frameT * 4));
+      ctx.save();
+      ctx.rotate((-v.heading * Math.PI) / 180); // ring stays upright
+      ctx.strokeStyle = rgba(WARN_RGB, pulse * v.alpha);
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(0, 0, s * 1.5, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+    drawAircraftShape(ctx, v.kind, s, v.color, v.alpha, st.frameT, glyphSeed(v.ac.id));
+    ctx.restore();
+  }
 
-    const hdg = projectHeading(ac.heading, cal);
+  // Labels (density + collision avoidance + optional rotation).
+  if (showLabels) {
+    drawLabels(ctx, st, settings, visible, mc, w, h, size);
+  }
+
+  // --- Optional layers (weather wash + wind, satellites) ---
+  drawOptionalLayers(ctx, settings, mc, ld, theme, project, w, h, size);
+}
+
+// ---------------------------------------------------------------------------
+// Labels
+// ---------------------------------------------------------------------------
+function labelLines(ac) {
+  const lines = [];
+  lines.push({ text: ac.callsign || ac.id || '????', kind: 'title' });
+  const fl = Math.round((ac.altitude ?? 0) / 100);
+  const sub = `FL${fl}  ${ac.speed ?? 0}kt`;
+  lines.push({ text: sub, kind: 'sub' });
+  if (Number.isFinite(ac.distanceNm)) lines.push({ text: `${ac.distanceNm}nm`, kind: 'sub' });
+  return lines;
+}
+
+function drawLabels(ctx, st, settings, visible, mc, w, h, size) {
+  const density = settings.display.labelDensity || 'nearestN';
+  const nearestN = Number.isFinite(settings.display.nearestN) ? settings.display.nearestN : 5;
+  const labRot = labelRotationRad(settings);
+
+  // Nearest first so they get priority placement and paint clearly.
+  const nearestFirst = [...visible].sort((a, b) => a.dist - b.dist);
+  const limit = density === 'all' ? nearestFirst.length : density === 'nearestOnly' ? 1 : nearestN;
+
+  st.labelBoxes = [];
+  const titleSize = mc.labelSize;
+  const subSize = mc.labelDimSize;
+  const lh = titleSize + 3;
+
+  const collides = (b) => {
+    const pad = 3;
+    for (const o of st.labelBoxes) {
+      if (b.x - pad < o.x + o.w && b.x + b.w + pad > o.x && b.y - pad < o.y + o.h && b.y + b.h + pad > o.y) {
+        return true;
+      }
+    }
+    return false;
+  };
+  const onScreen = (b) => b.x >= 6 && b.x + b.w <= w - 6 && b.y >= 6 && b.y + b.h <= h - 6;
+
+  for (let i = 0; i < Math.min(limit, nearestFirst.length); i++) {
+    const v = nearestFirst[i];
+    const lines = labelLines(v.ac);
+
+    // Measure.
+    let lw = 0;
+    for (const ln of lines) {
+      ctx.font = ln.kind === 'title'
+        ? `bold ${titleSize}px ui-monospace, Menlo, Consolas, monospace`
+        : `${subSize}px ui-monospace, Menlo, Consolas, monospace`;
+      lw = Math.max(lw, ctx.measureText(ln.text).width);
+    }
+    const bw = lw + 2;
+    const bh = lines.length * lh;
+    const gap = size * 0.7 + 8;
+
+    // Try four quadrants around the glyph; then nudge down to dodge overlaps.
+    const candidates = [
+      { x: v.p.x + gap, y: v.p.y - gap - bh },
+      { x: v.p.x + gap, y: v.p.y + gap },
+      { x: v.p.x - gap - bw, y: v.p.y - gap - bh },
+      { x: v.p.x - gap - bw, y: v.p.y + gap },
+    ];
+    let box = null;
+    for (const c of candidates) {
+      const b = { x: c.x, y: c.y, w: bw, h: bh };
+      if (onScreen(b) && !collides(b)) { box = b; break; }
+    }
+    if (!box) {
+      let b = { x: v.p.x + gap, y: v.p.y - gap - bh, w: bw, h: bh };
+      for (let k = 0; k < 9 && (collides(b) || !onScreen(b)); k++) b = { ...b, y: b.y + lh + 2 };
+      box = b;
+    }
+    // Keep on screen.
+    box.x = Math.max(6, Math.min(box.x, w - 6 - bw));
+    box.y = Math.max(6, Math.min(box.y, h - 6 - bh));
+    st.labelBoxes.push(box);
+
+    // Nearest brightest; gently dim farther ones but keep readable.
+    const prom = 1 - i / Math.max(1, nearestFirst.length);
+    const a = mc.labels * v.alpha * (0.7 + 0.3 * prom);
+    if (a < 0.04) continue;
+
+    // Leader line anchor (nearest edge of the box to the glyph).
+    const anchorX = box.x + bw / 2 < v.p.x ? box.x + bw : box.x;
+    const anchorY = Math.max(box.y, Math.min(v.p.y, box.y + bh));
 
     ctx.save();
-    ctx.globalAlpha = mc.aircraft;
-    ctx.translate(p.x, p.y);
-    drawAircraft(ctx, hdg, size, theme.aircraft, theme.aircraftGlow);
-    ctx.restore();
-
-    if (showLabels) {
-      ctx.globalAlpha = mc.labels;
-      ctx.shadowBlur = 0;
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'top';
-      const lx = p.x + size * 0.7;
-      const ly = p.y - size * 0.6;
-      ctx.font = labelFont;
-      ctx.fillStyle = theme.label;
-      ctx.fillText(ac.callsign, lx, ly);
-      ctx.font = labelDimFont;
-      ctx.fillStyle = theme.labelDim;
-      const fl = Math.round(ac.altitude / 100);
-      const dist = ac.distanceNm != null ? `${ac.distanceNm}nm` : '';
-      ctx.fillText(`FL${fl}  ${ac.speed}kt`, lx, ly + mc.labelSize + 2);
-      if (dist) ctx.fillText(dist, lx, ly + mc.labelSize * 2 + 4);
+    if (labRot) {
+      // Rotate the label (leader + text) around the glyph so text reads upright
+      // from where the viewer lies, without disturbing the field.
+      ctx.translate(v.p.x, v.p.y);
+      ctx.rotate(labRot);
+      ctx.translate(-v.p.x, -v.p.y);
     }
+    ctx.globalAlpha = 1;
+    ctx.shadowBlur = 0;
+
+    // Hairline leader.
+    ctx.strokeStyle = rgba(parseColorToRgb(getThemeLabelColor(settings)), 0.25 * a);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(v.p.x, v.p.y);
+    ctx.lineTo(anchorX, anchorY);
+    ctx.stroke();
+
+    // Text.
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    let y = box.y;
+    for (const ln of lines) {
+      if (ln.kind === 'title') {
+        ctx.font = `bold ${titleSize}px ui-monospace, Menlo, Consolas, monospace`;
+        ctx.fillStyle = v.emergency ? rgba(WARN_RGB, a) : `rgba(245,247,255,${a})`;
+      } else {
+        ctx.font = `${subSize}px ui-monospace, Menlo, Consolas, monospace`;
+        ctx.fillStyle = `rgba(180,200,230,${0.85 * a})`;
+      }
+      ctx.fillText(ln.text, box.x, y);
+      y += lh;
+    }
+    ctx.restore();
   }
-  ctx.restore();
+}
 
-  // --- Optional layers ---
+function getThemeLabelColor(settings) {
+  const t = getTheme(settings.display.theme);
+  return t.labelDim || t.label || '#a0bee6';
+}
 
-  // Weather: faint canvas wash + wind arrow. No overlay drawn in projector mode.
+// ---------------------------------------------------------------------------
+// Optional layers
+// ---------------------------------------------------------------------------
+function drawOptionalLayers(ctx, settings, mc, ld, theme, project, w, h, size) {
+  const layers = settings.layers || {};
+  const showLabels = settings.display.labels !== false;
+
+  // Weather: faint canvas wash + wind arrow. No overlay in projector mode.
   if (!mc.noCanvasOverlays && layers.weather && ld.weather) {
     const wx = ld.weather;
     const cloud = Math.max(0, Math.min(100, wx.cloudCover || 0)) / 100;
@@ -333,6 +581,9 @@ function draw(ctx, st, props, dt) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Calibration test pattern + debug HUD
+// ---------------------------------------------------------------------------
 // Calibration test pattern: grid + center dot + outer ring + compass + corners.
 function drawTestPattern(ctx, w, h, center, radiusPx, theme, brightness) {
   ctx.save();
@@ -396,5 +647,73 @@ function drawTestPattern(ctx, w, h, center, radiusPx, theme, brightness) {
   corner(pad, h - pad, 1, -1);
   corner(w - pad, h - pad, -1, -1);
 
+  ctx.restore();
+}
+
+// Debug HUD: current display mode + calibration values, plus a few sample
+// aircraft glyphs so you can confirm orientation/scale before going live.
+function drawCalibrationHud(ctx, st, settings, project, center, radiusPx, theme, brightness, now) {
+  const cal = getCalibration(settings);
+  const d = settings.display || {};
+
+  // Sample aircraft: live tracks if any, otherwise four synthetic ones at the
+  // cardinal mid-radius points so the overlay is useful even with no traffic.
+  const renderTime = now - renderDelayMs(settings);
+  let samples = [];
+  for (const tr of st.tracks.values()) {
+    const pos = sampleAircraftTrack(tr, renderTime, settings);
+    if (!pos) continue;
+    const p = project(pos.lat, pos.lon);
+    if (p.x < 0 || p.x > st.w || p.y < 0 || p.y > st.h) continue;
+    const geoHdg = sampleTrackHeading(tr, renderTime, settings);
+    samples.push({ p, heading: projectHeading(geoHdg, cal), kind: classifyAircraftGlyph(tr.ac), id: tr.ac.id });
+    if (samples.length >= 8) break;
+  }
+  if (samples.length === 0) {
+    const r = radiusPx * 0.55;
+    const synth = [
+      { x: center.x, y: center.y - r, heading: projectHeading(0, cal) },
+      { x: center.x + r, y: center.y, heading: projectHeading(90, cal) },
+      { x: center.x, y: center.y + r, heading: projectHeading(180, cal) },
+      { x: center.x - r, y: center.y, heading: projectHeading(270, cal) },
+    ];
+    samples = synth.map((s, i) => ({ p: { x: s.x, y: s.y }, heading: s.heading, kind: 'airliner', id: `sample${i}` }));
+  }
+
+  ctx.save();
+  ctx.globalAlpha = brightness;
+  for (const s of samples) {
+    ctx.save();
+    ctx.translate(s.p.x, s.p.y);
+    ctx.rotate((s.heading * Math.PI) / 180);
+    drawAircraftShape(ctx, s.kind, 14, [120, 224, 196], 0.9, st.frameT, glyphSeed(s.id));
+    ctx.restore();
+  }
+  ctx.restore();
+
+  // Calibration values panel (top-left).
+  const lines = [
+    `MODE      ${(d.displayMode || 'normal').toUpperCase()}`,
+    `OFFSET    x ${Math.round(cal.offsetX)}   y ${Math.round(cal.offsetY)}`,
+    `SCALE     ${Number(cal.scale).toFixed(2)}x`,
+    `ROTATION  ${Math.round(cal.rotation)} deg`,
+    `MIRROR    H ${cal.flipH ? 'on' : 'off'}   V ${cal.flipV ? 'on' : 'off'}`,
+    `LABEL ROT ${Math.round(d.labelRotationDeg || 0)} deg`,
+    `RANGE     ${settings.rangeNm || 60} nm`,
+  ];
+  ctx.save();
+  ctx.globalAlpha = Math.min(1, brightness + 0.1);
+  ctx.font = '12px ui-monospace, Menlo, Consolas, monospace';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'top';
+  const padX = 14;
+  const padY = 14;
+  const lineH = 16;
+  const boxW = 240;
+  const boxH = lines.length * lineH + 16;
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(padX - 6, padY - 6, boxW, boxH);
+  ctx.fillStyle = theme.ringTextBright || theme.compass || '#9cf';
+  lines.forEach((ln, i) => ctx.fillText(ln, padX, padY + i * lineH));
   ctx.restore();
 }

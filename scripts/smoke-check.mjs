@@ -326,9 +326,78 @@ async function apiProviderTests() {
 }
 
 // ---------------------------------------------------------------------------
+// Part D — motion model + normalizer passthrough (no network, pure units)
+// ---------------------------------------------------------------------------
+async function motionAndNormalizerTests() {
+  console.log('\nPart D — motion model + normalizer passthrough (no network)');
+
+  // --- aircraftMotion.js (plain JS, importable in Node) ---
+  const motion = await import('../frontend/src/lib/aircraftMotion.js');
+  const cfg = { motion: { interpolate: true, renderDelayMs: 1150, maxExtrapolationSec: 4, staleSec: 20 } };
+
+  // smoothHeading takes the shortest arc (350° → 10° goes UP through 0°, +20°).
+  const sh = motion.smoothHeading(350, 10, 0.5);
+  check(sh > 355 || sh < 5, `smoothHeading shortest-arc 350→10 (got ${sh.toFixed(1)})`);
+  check(motion.smoothHeading(undefined, 42) === 42, 'smoothHeading seeds from undefined');
+
+  // deadReckon: due east at 3600 kt for 1 s ≈ +1 nm ≈ +0.01667° lon at equator.
+  const dr = motion.deadReckonPosition({ lat: 0, lon: 0 }, 90, 3600, 1);
+  check(Math.abs(dr.lon - 0.01667) < 0.0005 && Math.abs(dr.lat) < 1e-6,
+    `deadReckon east 1nm (got lon ${dr.lon.toFixed(5)})`);
+
+  // Interpolation between two fixes 1 s apart → exact midpoint at +0.5 s.
+  const tracks = new Map();
+  motion.updateAircraftTracks(tracks, [{ id: 'A', lat: 0, lon: 0, heading: 90, speed: 600 }], 1000, cfg);
+  motion.updateAircraftTracks(tracks, [{ id: 'A', lat: 0, lon: 2, heading: 90, speed: 600 }], 2000, cfg);
+  const mid = motion.sampleAircraftTrack(tracks.get('A'), 1500, cfg);
+  check(Math.abs(mid.lon - 1.0) < 1e-6, `interpolation midpoint (got lon ${mid.lon.toFixed(4)}, want 1.0)`);
+
+  // Sampling before the oldest fix clamps to it.
+  const before = motion.sampleAircraftTrack(tracks.get('A'), 500, cfg);
+  check(Math.abs(before.lon) < 1e-6, `clamp before oldest fix (got lon ${before.lon.toFixed(4)})`);
+
+  // Extrapolation past the newest fix is capped (≤ maxExtrapolationSec) and finite.
+  const after = motion.sampleAircraftTrack(tracks.get('A'), 9000, cfg); // 7 s past, capped at 4 s
+  check(Number.isFinite(after.lon) && after.lon > 2 && after.lon < 2.1,
+    `extrapolation capped + finite (got lon ${after.lon.toFixed(4)})`);
+
+  // Heading derived from motion (eastward) ≈ 90°.
+  const hdg = motion.sampleTrackHeading(tracks.get('A'), 1500, cfg);
+  check(Math.abs(hdg - 90) < 1, `heading from motion eastward (got ${hdg.toFixed(1)})`);
+
+  // Stale pruning removes tracks past the window.
+  motion.pruneStaleTracks(tracks, 2000 + 21000, 20000);
+  check(tracks.size === 0, `pruneStaleTracks drops stale (size ${tracks.size})`);
+
+  // --- normalizer passthrough (backward-compatible additive fields) ---
+  const { normalizeAircraft } = await import('../backend/aircraft/aircraftNormalizer.js');
+  const raw = {
+    hex: 'abc123', flight: 'AAL1 ', lat: 32.8, lon: -96.8, alt_baro: 35000,
+    gs: 430, track: 270, t: 'B77W', r: 'N123AB', squawk: '1200',
+    category: 'A5', baro_rate: -640, onGround: false,
+  };
+  const ac = normalizeAircraft(raw, 'api');
+  check(ac.aircraftType === 'B77W', `normalizer keeps aircraftType (got ${ac.aircraftType})`);
+  check(ac.typeCode === 'B77W', `normalizer passes typeCode (got ${ac.typeCode})`);
+  check(ac.registration === 'N123AB', `normalizer passes registration (got ${ac.registration})`);
+  check(ac.verticalRate === -640, `normalizer passes verticalRate (got ${ac.verticalRate})`);
+  check(ac.squawk === '1200', `normalizer keeps squawk (got ${ac.squawk})`);
+
+  // On-ground flows through from the "ground" string the providers flag.
+  const groundAc = normalizeAircraft({ hex: 'd1', lat: 32.7, lon: -96.7, altitude: 0, onGround: true }, 'local_adsb');
+  check(groundAc.onGround === true, 'normalizer passes onGround flag');
+
+  // A bare record (no optional fields) still normalizes and omits the extras.
+  const bare = normalizeAircraft({ id: 'x', lat: 1, lon: 2 }, 'mock');
+  check(bare && bare.typeCode === undefined && bare.registration === undefined,
+    'normalizer stays backward-compatible (omits absent optional fields)');
+}
+
+// ---------------------------------------------------------------------------
 console.log(`Above Live — smoke check (port ${PORT})`);
 await integrationTests();
 await unitTests();
 await apiProviderTests();
+await motionAndNormalizerTests();
 console.log(failed ? '\nSMOKE CHECK FAILED' : '\nSMOKE CHECK PASSED');
 process.exit(failed ? 1 : 0);

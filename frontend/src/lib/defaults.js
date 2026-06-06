@@ -12,8 +12,17 @@ export const DEFAULT_SETTINGS = {
     theme: 'night', brightness: 1, labels: true, trails: true, aircraftSize: 1,
     displayMode: 'normal',
     brightnessMap: {},
+    maxFps: 30,                 // render-loop cap; 0 = uncapped, 30 = Pi-safe default
+    altitudeColor: true,        // colour glyphs/trails by altitude
+    labelDensity: 'nearestN',   // 'all' | 'nearestN' | 'nearestOnly'
+    nearestN: 5,
+    labelRotationDeg: 0,        // rotate labels independently of the field
+    highlightEmergency: true,   // subtle 7500/7600/7700 highlight
   },
   calibration: { offsetX: 0, offsetY: 0, scale: 1, rotation: 0, flipH: false, flipV: false },
+
+  // Smooth-motion model (see frontend/src/lib/aircraftMotion.js).
+  motion: { interpolate: true, renderDelayMs: 1150, maxExtrapolationSec: 4, staleSec: 20 },
   api: { baseUrl: 'https://api.airplanes.live/v2', apiKey: '', pollIntervalMs: 30000, rateLimitBackoffMs: 60000 },
   localAdsb: { url: 'http://localhost:8080/data/aircraft.json', path: '', pollIntervalMs: 1000 },
 

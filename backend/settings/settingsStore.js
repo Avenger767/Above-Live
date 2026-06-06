@@ -21,8 +21,27 @@ export const DEFAULT_SETTINGS = {
     theme: 'night', brightness: 1, labels: true, trails: true, aircraftSize: 1,
     displayMode: 'normal',
     brightnessMap: {},
+    // Performance: cap the render loop. 0 = uncapped, 30 = safe Raspberry Pi default.
+    maxFps: 30,
+    // Colour glyphs/trails by altitude (theme colour is the fallback when off).
+    altitudeColor: true,
+    // Labels: how many to show, and an independent text rotation for ceilings.
+    labelDensity: 'nearestN',   // 'all' | 'nearestN' | 'nearestOnly'
+    nearestN: 5,
+    labelRotationDeg: 0,
+    // Subtle warning highlight for emergency squawks (7500/7600/7700).
+    highlightEmergency: true,
   },
   calibration: { offsetX: 0, offsetY: 0, scale: 1, rotation: 0, flipH: false, flipV: false },
+
+  // Smooth-motion model (Skylight-style). The display renders slightly in the
+  // past and interpolates between known fixes instead of snapping each second.
+  motion: {
+    interpolate: true,
+    renderDelayMs: 1150,      // how far in the past we render (just over ~1 Hz fixes)
+    maxExtrapolationSec: 4,   // cap dead-reckoning past the newest fix
+    staleSec: 20,             // drop a track after this long with no update
+  },
   api: {
     baseUrl: 'https://api.airplanes.live/v2',
     apiKey: '',

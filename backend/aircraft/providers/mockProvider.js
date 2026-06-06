@@ -7,7 +7,18 @@ import { advancePosition, haversineNm, bearingDeg, clamp } from '../aircraftMath
 import { normalizeList } from '../aircraftNormalizer.js';
 
 const AIRLINES = ['AAL', 'DAL', 'UAL', 'SWA', 'JBU', 'FFT', 'SKW', 'ASA', 'NKS', 'ENY'];
-const TYPES = ['A321', 'A320', 'B738', 'B739', 'A319', 'E175', 'CRJ9', 'B752', 'A20N', 'B38M'];
+
+// A spread of ICAO type codes so the type-aware glyphs (light / turboprop /
+// airliner / widebody / quadjet / helicopter) all show up in mock mode. These
+// match the classifier tables in frontend/src/lib/aircraftSymbols.js.
+const TYPES = [
+  'A321', 'A320', 'B738', 'B739', 'A319', 'E175', 'CRJ9', 'B752', 'A20N', 'B38M', // airliners
+  'B77W', 'A359', 'B788',   // widebodies
+  'B744', 'A388',           // quadjets
+  'C172', 'SR22', 'PA28',   // light
+  'DH8D', 'AT72', 'PC12',   // turboprops
+  'B407', 'EC35',           // helicopters
+];
 
 function rand(min, max) {
   return min + Math.random() * (max - min);
@@ -17,12 +28,20 @@ function pick(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
+// A plausible-looking tail number, e.g. "N4827G".
+function fakeReg() {
+  const digits = String(Math.floor(rand(100, 9999)));
+  const letters = 'ABCDEFGHJKLMNPRSTUVWXYZ';
+  return 'N' + digits + pick(letters.split(''));
+}
+
 // Each fake flight keeps its own state so motion is continuous between ticks.
 function spawnAircraft(home, rangeNm) {
   // Spawn somewhere within ~80% of the range, at a random bearing from home.
   const dist = rand(rangeNm * 0.1, rangeNm * 0.8);
   const brg = rand(0, 360);
   const pos = advancePosition(home.lat, home.lon, brg, dist);
+  const type = pick(TYPES);
   return {
     id: pick(AIRLINES) + Math.floor(rand(100, 9999)),
     lat: pos.lat,
@@ -30,7 +49,11 @@ function spawnAircraft(home, rangeNm) {
     altitude: Math.round(rand(8000, 39000) / 500) * 500,
     speed: Math.round(rand(280, 480)),
     heading: rand(0, 360),
-    aircraftType: pick(TYPES),
+    aircraftType: type,
+    typeCode: type,
+    registration: fakeReg(),
+    squawk: pick(['1200', '2000', '7000', '4571', '6143']), // ordinary codes only
+    verticalRate: 0,
     // Slow drift applied to heading each tick for gentle, lifelike turns.
     turnRate: rand(-0.3, 0.3),
   };
@@ -80,8 +103,16 @@ export function createMockProvider() {
         ac.heading = (ac.heading + diff * 0.1 + 360) % 360;
       }
 
-      // Occasional small altitude / speed wander for visual interest.
-      if (Math.random() < 0.02) ac.altitude = clamp(ac.altitude + rand(-1000, 1000), 5000, 41000);
+      // Occasional small altitude / speed wander for visual interest. When the
+      // altitude changes, expose a matching vertical rate (ft/min) so the
+      // field flows through normalization like a real feed; otherwise decay it.
+      if (Math.random() < 0.02) {
+        const prevAlt = ac.altitude;
+        ac.altitude = clamp(ac.altitude + rand(-1000, 1000), 5000, 41000);
+        ac.verticalRate = Math.round((ac.altitude - prevAlt) / Math.max(0.1, dtSec) * 60);
+      } else {
+        ac.verticalRate = Math.round((ac.verticalRate || 0) * 0.7);
+      }
       if (Math.random() < 0.02) ac.speed = clamp(ac.speed + rand(-15, 15), 220, 510);
     }
 
@@ -94,6 +125,10 @@ export function createMockProvider() {
       speed: Math.round(ac.speed),
       heading: Math.round(ac.heading),
       aircraftType: ac.aircraftType,
+      typeCode: ac.typeCode,
+      registration: ac.registration,
+      squawk: ac.squawk,
+      verticalRate: Math.round(ac.verticalRate || 0),
       timestamp: now,
     }));
 

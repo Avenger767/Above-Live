@@ -68,13 +68,34 @@ export function normalizeAircraft(raw, source) {
     timestamp,
   };
 
-  // Carry a few optional ADS-B fields through when present (labels may use them
-  // later; harmless when absent).
+  // Carry a few optional ADS-B fields through when present (labels + type-aware
+  // glyphs + emergency highlighting use them later; all harmless when absent).
+  // Everything here is ADDITIVE: existing fields above are unchanged, so older
+  // frontends that only read the core fields keep working.
   const squawk = str(raw.squawk);
   if (squawk) ac.squawk = squawk;
   const category = str(raw.category);
   if (category) ac.category = category;
   if (Number.isFinite(Number(raw.rssi))) ac.rssi = Number(raw.rssi);
+
+  // ICAO type code (e.g. "B738"). dump1090 exposes it as `t`; we already map
+  // that into `aircraftType`, but pass a dedicated `typeCode` through too so the
+  // frontend glyph classifier has an unambiguous field to read.
+  const typeCode = str(raw.typeCode ?? raw.t ?? raw.type ?? raw.icaoType);
+  if (typeCode && typeCode !== 'UNK') ac.typeCode = typeCode;
+
+  // Registration / tail number (dump1090 `r`).
+  const registration = str(raw.registration ?? raw.r ?? raw.reg ?? raw.tail);
+  if (registration) ac.registration = registration;
+
+  // Vertical rate, ft/min (positive = climbing). dump1090 uses baro_rate /
+  // geom_rate; APIs may use vert_rate / verticalRate.
+  const vr = raw.verticalRate ?? raw.baro_rate ?? raw.geom_rate ?? raw.vert_rate ?? raw.vrate;
+  if (Number.isFinite(Number(vr))) ac.verticalRate = Math.round(Number(vr));
+
+  // On-ground flag. Providers coerce alt_baro "ground" → 0 before normalizing,
+  // so they also set an explicit onGround we can read here.
+  if (raw.onGround === true || raw.ground === true) ac.onGround = true;
 
   return ac;
 }

@@ -29,9 +29,11 @@ export default function ControlPanel({ settings, onChange, onToggleFullscreen, o
   const d = settings.display;
   const layers = settings.layers || {};
   const bm = d.brightnessMap || {};
+  const motion = settings.motion || {};
 
   const setDisplay = (patch) => onChange({ display: { ...d, ...patch } });
   const setLayer = (key, value) => onChange({ layers: { ...layers, [key]: value } });
+  const setMotion = (patch) => onChange({ motion: { ...motion, ...patch } });
   const setBrightnessMap = (key, val) =>
     setDisplay({ brightnessMap: { ...bm, [key]: val } });
 
@@ -104,6 +106,74 @@ export default function ControlPanel({ settings, onChange, onToggleFullscreen, o
         <span>Trails</span>
         <input type="checkbox" checked={d.trails} onChange={(e) => setDisplay({ trails: e.target.checked })} />
       </label>
+
+      <label className="field toggle">
+        <span>Altitude colour</span>
+        <input
+          type="checkbox"
+          checked={d.altitudeColor !== false}
+          onChange={(e) => setDisplay({ altitudeColor: e.target.checked })}
+        />
+      </label>
+
+      <label className="field toggle">
+        <span>Emergency highlight</span>
+        <input
+          type="checkbox"
+          checked={d.highlightEmergency !== false}
+          onChange={(e) => setDisplay({ highlightEmergency: e.target.checked })}
+        />
+      </label>
+
+      <h3>Labels</h3>
+
+      <label className="field">
+        <span>Show</span>
+        <select
+          value={d.labelDensity || 'nearestN'}
+          onChange={(e) => setDisplay({ labelDensity: e.target.value })}
+        >
+          <option value="all">All</option>
+          <option value="nearestN">Nearest N</option>
+          <option value="nearestOnly">Nearest only</option>
+        </select>
+      </label>
+
+      {(d.labelDensity || 'nearestN') === 'nearestN' && (
+        <label className="field">
+          <span>Nearest N ({d.nearestN ?? 5})</span>
+          <input
+            type="range" min="1" max="20" step="1"
+            value={d.nearestN ?? 5}
+            onChange={(e) => setDisplay({ nearestN: Number(e.target.value) })}
+          />
+        </label>
+      )}
+
+      <h3>Motion &amp; Performance</h3>
+
+      <label className="field toggle">
+        <span>Smooth motion</span>
+        <input
+          type="checkbox"
+          checked={motion.interpolate !== false}
+          onChange={(e) => setMotion({ interpolate: e.target.checked })}
+        />
+      </label>
+
+      <label className="field">
+        <span>Max FPS</span>
+        <select
+          value={String(d.maxFps ?? 30)}
+          onChange={(e) => setDisplay({ maxFps: Number(e.target.value) })}
+        >
+          <option value="0">Uncapped</option>
+          <option value="24">24</option>
+          <option value="30">30 (Pi safe)</option>
+          <option value="60">60</option>
+        </select>
+      </label>
+      <p className="field-hint">30 FPS is a good default on a Raspberry Pi 4.</p>
 
       {/* Per-element brightness controls — projector mode only */}
       {d.displayMode === 'projector' && (

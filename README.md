@@ -88,12 +88,29 @@ Mock mode is the **default**, so as soon as both servers are running you'll see 
 drifting around your home location with callsigns, altitude (as flight levels), speed, distance,
 and fading trails. Nothing else to configure.
 
+The mock fleet now includes a spread of aircraft types — airliners, widebodies, four-engine
+heavies, light singles, turboprops, and helicopters — so you can see the **type-aware glyphs**,
+**altitude colouring**, and tapered **comet trails** without any hardware.
+
 To confirm the provider, open the **Status** tab in the side panel, or hit the API directly:
 
 ```bash
 curl http://localhost:4000/api/status
 curl http://localhost:4000/api/aircraft
 ```
+
+### Seeing the smooth motion
+
+Above Live renders the sky slightly in the past (≈1.15 s) and **interpolates between known
+fixes** instead of snapping once per second, so traffic glides. To compare:
+
+1. Run both servers (MOCK is the default) and open the display.
+2. In the **Display** panel, find **Motion & Performance → Smooth motion**.
+3. Toggle it off and on. Off = the old once-per-second step; on = continuous glide.
+
+`Max FPS` lives in the same section (default **30**, a safe Raspberry Pi 4 value; `Uncapped`
+uses the display refresh rate). Altitude colour, emergency highlight, and label density/Nearest-N
+are all in the **Display** panel too.
 
 ---
 
@@ -436,13 +453,42 @@ above-live/
 ## Smoke check
 
 A pure-Node check (no network) that verifies MOCK aircraft, the status/provider-test endpoints,
-LOCAL_ADSB parsing of the sample fixture (and the not-configured case), and that optional layers
-stay off/quiet by default:
+LOCAL_ADSB parsing of the sample fixture (and the not-configured case), that optional layers
+stay off/quiet by default, the API cache/rate-limit behaviour, and — added with the motion
+upgrade — the smooth-motion math (interpolation, capped extrapolation, shortest-arc heading,
+stale pruning) and the backward-compatible normalizer field passthrough (typeCode, registration,
+verticalRate, onGround):
 
 ```bash
 node scripts/smoke-check.mjs      # from the project root
 # or:  cd backend && npm run smoke
 ```
+
+## Display & motion settings
+
+The motion upgrade adds a handful of settings. **All are optional and backward-compatible** —
+older `settings.json` files keep working because both the backend store and the frontend defaults
+deep-merge these keys in when they're missing.
+
+Under `display`:
+
+| Key                 | Default      | Meaning                                                        |
+|---------------------|--------------|----------------------------------------------------------------|
+| `maxFps`            | `30`         | Render-loop cap. `0` = uncapped. 30 is a safe Raspberry Pi 4 value. |
+| `altitudeColor`     | `true`       | Colour glyphs/trails by altitude (theme colour is the fallback when off). |
+| `labelDensity`      | `"nearestN"` | `"all"`, `"nearestN"`, or `"nearestOnly"`.                     |
+| `nearestN`          | `5`          | How many labels to show when `labelDensity` is `nearestN`.     |
+| `labelRotationDeg`  | `0`          | Rotate label text only, independent of the field (for ceilings). |
+| `highlightEmergency`| `true`       | Subtle highlight for 7500/7600/7700 squawks.                   |
+
+Top-level `motion` object:
+
+| Key                  | Default | Meaning                                                       |
+|----------------------|---------|---------------------------------------------------------------|
+| `interpolate`        | `true`  | Smooth interpolation on/off (off = snap to each fix).         |
+| `renderDelayMs`      | `1150`  | How far in the past to render, so we can interpolate between known fixes. |
+| `maxExtrapolationSec`| `4`     | Cap on dead-reckoning past the newest fix.                    |
+| `staleSec`           | `20`    | Drop a track after this long with no update.                  |
 
 ## API reference (quick)
 

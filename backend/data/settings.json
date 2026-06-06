@@ -13,7 +13,13 @@
     "brightness": 1,
     "labels": true,
     "trails": true,
-    "aircraftSize": 1
+    "aircraftSize": 1,
+    "maxFps": 30,
+    "altitudeColor": true,
+    "labelDensity": "nearestN",
+    "nearestN": 5,
+    "labelRotationDeg": 0,
+    "highlightEmergency": true
   },
   "calibration": {
     "offsetX": 0,
@@ -22,6 +28,12 @@
     "rotation": 0,
     "flipH": false,
     "flipV": false
+  },
+  "motion": {
+    "interpolate": true,
+    "renderDelayMs": 1150,
+    "maxExtrapolationSec": 4,
+    "staleSec": 20
   },
   "api": {
     "baseUrl": "https://api.airplanes.live/v2",

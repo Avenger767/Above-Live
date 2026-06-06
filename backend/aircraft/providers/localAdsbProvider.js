@@ -63,7 +63,12 @@ export function createLocalAdsbProvider() {
     // dump1090/readsb put aircraft under "aircraft"; tolerate "ac" too.
     // alt_baro can be the string "ground"; coerce it to 0.
     const list = data.aircraft || data.ac || [];
-    return list.map((a) => ({ ...a, alt_baro: a.alt_baro === 'ground' ? 0 : a.alt_baro }));
+    return list.map((a) => ({
+      ...a,
+      // Capture on-ground before "ground" is coerced to 0 (see normalizer).
+      onGround: a.onGround === true || a.ground === true || a.alt_baro === 'ground',
+      alt_baro: a.alt_baro === 'ground' ? 0 : a.alt_baro,
+    }));
   }
 
   // One read that updates cache/state. Returns normalized aircraft.

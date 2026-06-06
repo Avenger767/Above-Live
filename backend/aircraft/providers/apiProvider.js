@@ -92,7 +92,13 @@ export function createApiProvider() {
     const data = await res.json();
     const rawList = (
       data.ac || data.aircraft || data.states || (Array.isArray(data) ? data : [])
-    ).map((a) => ({ ...a, alt_baro: a.alt_baro === 'ground' ? 0 : a.alt_baro }));
+    ).map((a) => ({
+      ...a,
+      // Capture the on-ground state before coercing the "ground" string to 0,
+      // otherwise the normalizer can't tell parked traffic from sea-level fixes.
+      onGround: a.onGround === true || a.ground === true || a.alt_baro === 'ground',
+      alt_baro: a.alt_baro === 'ground' ? 0 : a.alt_baro,
+    }));
     return normalizeList(rawList, name, s.home);
   }
 
