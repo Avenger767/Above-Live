@@ -38,8 +38,9 @@
   "api": {
     "baseUrl": "https://api.airplanes.live/v2",
     "apiKey": "",
-    "pollIntervalMs": 30000,
-    "rateLimitBackoffMs": 60000
+    "pollIntervalMs": 60000,
+    "rateLimitBackoffMs": 120000,
+    "settingsDebounceMs": 3000
   },
   "localAdsb": {
     "url": "http://localhost:8080/data/aircraft.json",

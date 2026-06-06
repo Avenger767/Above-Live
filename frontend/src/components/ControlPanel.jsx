@@ -160,6 +160,7 @@ export default function ControlPanel({ settings, onChange, onToggleFullscreen, o
           onChange={(e) => setMotion({ interpolate: e.target.checked })}
         />
       </label>
+      <p className="field-hint">Interpolates between aircraft updates.</p>
 
       <label className="field">
         <span>Max FPS</span>

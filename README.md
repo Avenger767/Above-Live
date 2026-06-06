@@ -99,18 +99,26 @@ curl http://localhost:4000/api/status
 curl http://localhost:4000/api/aircraft
 ```
 
-### Seeing the smooth motion
+### Testing smooth aircraft motion
 
 Above Live renders the sky slightly in the past (≈1.15 s) and **interpolates between known
-fixes** instead of snapping once per second, so traffic glides. To compare:
+fixes** instead of snapping once per second, so traffic glides. MOCK mode is the easiest way to
+see it (the fleet updates ~once per second, just like a real feed). Step by step:
 
-1. Run both servers (MOCK is the default) and open the display.
-2. In the **Display** panel, find **Motion & Performance → Smooth motion**.
-3. Toggle it off and on. Off = the old once-per-second step; on = continuous glide.
+1. **Start the backend:** `cd backend && npm run dev` (or `npm start`).
+2. **Start the frontend:** `cd frontend && npm run dev`, then open **http://localhost:5173**.
+3. **Use the MOCK provider** — it's the default. (Side panel → **Display → Provider → MOCK** if
+   you changed it.)
+4. In the **Display** panel, open **Motion & Performance** and set **Max FPS** to **30**.
+5. Turn **Smooth motion** **on**. Watch a few aircraft — they should **glide** continuously.
+6. Now toggle **Smooth motion** **off** and watch the same aircraft. They **jump/snap** once per
+   second (the raw fix cadence).
+7. Toggle it back **on** and confirm the gliding returns. That difference — glide vs. jump — is
+   the smooth-motion model working.
 
-`Max FPS` lives in the same section (default **30**, a safe Raspberry Pi 4 value; `Uncapped`
-uses the display refresh rate). Altitude colour, emergency highlight, and label density/Nearest-N
-are all in the **Display** panel too.
+`Max FPS` (default **30**, a safe Raspberry Pi 4 value; `Uncapped` uses the display refresh rate),
+altitude colour, emergency highlight, and label density / Nearest-N all live in the **Display**
+panel too.
 
 ---
 
@@ -186,12 +194,15 @@ altitude to `0`.
 Above Live protects you automatically:
 
 - **Cached polling.** The backend calls the external API only once every `API_POLL_INTERVAL_MS`
-  (default **30000 = 30s**). The WebSocket/poll loop still updates the display ~once per second,
+  (default **60000 = 60s**). The WebSocket/poll loop still updates the display ~once per second,
   but it serves **cached** aircraft between those fetches. The external API is *never* called on
   the 1-second loop.
 - **429 backoff.** If the API returns HTTP 429, Above Live stops calling it for at least
-  `API_RATE_LIMIT_BACKOFF_MS` (default **60000 = 60s**) and keeps showing the last successful
+  `API_RATE_LIMIT_BACKOFF_MS` (default **120000 = 120s**) and keeps showing the last successful
   real aircraft from cache.
+- **Debounced settings changes.** Moving the Range slider (or changing home) doesn't fire a fetch
+  per save — changes are coalesced and a single re-fetch runs `API_SETTINGS_DEBOUNCE_MS`
+  (default **3000 = 3s**) after they settle. The poll interval and 429 backoff are never bypassed.
 - **Cache preferred over mock.** It only falls back to MOCK when there is *no* cached API data
   at all (e.g. the very first request was rate-limited).
 - **One source of truth.** All external calls happen in `apiProvider.js`. Nothing else (status,
@@ -202,8 +213,9 @@ Tunable via `.env` (or `settings.json` under `"api"`):
 ```
 PROVIDER=API
 API_BASE_URL=https://api.airplanes.live/v2
-API_POLL_INTERVAL_MS=30000        # how often to actually hit the API
-API_RATE_LIMIT_BACKOFF_MS=60000   # how long to wait after an HTTP 429
+API_POLL_INTERVAL_MS=60000        # how often to actually hit the API
+API_RATE_LIMIT_BACKOFF_MS=120000  # how long to wait after an HTTP 429
+API_SETTINGS_DEBOUNCE_MS=3000     # coalesce rapid settings changes before re-fetch
 # API_KEY=                        # only for APIs that require a bearer key
 ```
 
@@ -351,6 +363,25 @@ layer has a read-only endpoint: `/api/weather`, `/api/satellites`, `/api/space`.
 The Pi 4 handles the canvas renderer comfortably. Lower the **Range** or turn off **Trails** in
 the panel if you want to save a few cycles on a very busy feed.
 
+### Recommended Raspberry Pi 4 settings
+
+A good starting point for a Pi 4 driving a projector or wall display (all in the **Display**
+panel unless noted):
+
+- **Max FPS:** `30` — smooth enough for the eye, easy on the GPU.
+- **Provider:** `MOCK` for the very first test (no network/hardware needed), then switch to
+  **`LOCAL_ADSB`** once dump1090/readsb is running (see §11), or **`API`** for internet data.
+- **Altitude colour:** **on** — quick visual read of high vs. low traffic.
+- **Label density:** **Nearest N**.
+- **Nearest N:** `5` — keeps text readable and the draw light on a busy feed.
+- **Optional layers (Satellites / Weather / Space):** **off** at first — bring them up one at a
+  time after aircraft look right.
+- **Display mode:** use **Projector** (pure-black background, brighter strokes) or
+  **Calibration** (alignment grid) when setting up a ceiling/wall — see §13.
+
+If a very busy feed ever feels heavy, drop **Range**, turn **Trails** off, or set **Max FPS** to
+`24`.
+
 ---
 
 ## 13. Later: Chromium kiosk mode
@@ -402,10 +433,18 @@ curl -s http://localhost:4000/api/status | python3 -m json.tool
 ```
 Look at the `api` block:
 - `adapter` — e.g. `api.airplanes.live`
-- `lastSuccess` — timestamp of the last real fetch (should advance every ~30s)
-- `cached` — `true` only when data is going stale (overdue refresh / backoff)
+- `lastSuccess` — timestamp of the last real fetch (should advance every ~60s)
+- `externalFetchCount` / `cacheHitCount` — real API calls vs. cache reads; the ratio proves
+  the 1s loop is served from cache
+- `usingCachedAircraft` — `true` when serving stale cache (overdue refresh / backoff)
+- `nextAllowedFetch` — when the next external call is permitted
 - `rateLimited` + `nextRetry` — backoff state and when the next API call is allowed
 - `lastError` — last API error (e.g. the 429 message), or `null`
+
+For the full internal provider state (cache key, counters, timers) hit the debug endpoint:
+```bash
+curl -s http://localhost:4000/api/debug/provider | python3 -m json.tool
+```
 
 Top-level `effectiveProvider` should read `API` and `usingFallback` should be `false` whenever
 there is cached real data — even during a backoff.
@@ -419,22 +458,29 @@ Returns `success`, `adapter`, `configured`, `aircraftCount`, `usingCache`, `last
 you've recently been rate-limited it returns `usingCache:true` with a `warning` and `nextRetry`
 **without contacting the API** (so it can't make throttling worse).
 
-**4. Confirm it is NOT over-polling Airplanes.live.** Watch the backend terminal — it logs real
-fetch activity, and on a 429 prints:
+**4. Confirm it is NOT over-polling Airplanes.live.** Watch the backend terminal — it logs each
+real fetch on one line, and on a 429 prints:
 ```
-[api] rate limited — backing off 60s (serving N cached aircraft)
+[api] FETCH  → https://api.airplanes.live/v2/point/32.7767/-96.797/60
+[api] DONE   ← 39 aircraft
+[api] RATE   429 — backing off 120s (39 cached ac)
 ```
-You can also poll `/api/status` a few times within 30 seconds: `aircraftCount` updates smoothly
+Cache hits on the 1s loop are silent (no log spam). Moving the Range slider prints
+`[api] INVAL  settings changed — next fetch in 3s` once per change, then a single `FETCH` after
+the debounce — not one fetch per slider step.
+
+You can also poll `/api/status` a few times within a minute: `aircraftCount` updates smoothly
 every second (cached), but `api.lastSuccess` only changes about once per `API_POLL_INTERVAL_MS`
-(30s). That gap is the proof the external API is hit on the slow cadence, not the 1s loop.
+(60s). That gap is the proof the external API is hit on the slow cadence, not the 1s loop.
 
 To make over-polling impossible to miss while testing, temporarily lower the interval, e.g.
 `API_POLL_INTERVAL_MS=5000`, and confirm `api.lastSuccess` advances only every ~5s while the
-display keeps updating each second. Set it back to `30000` for normal use.
+display keeps updating each second. Set it back to `60000` for normal use.
 
-**If you hit a 429:** the display keeps showing your last real aircraft from cache, the panel's
-**Status** tab shows `backoff → Ns`, and after `API_RATE_LIMIT_BACKOFF_MS` Above Live tries the
-API again automatically. No restart needed.
+**If you hit a 429:** the display keeps showing your last real aircraft from cache, the top bar
+shows an **API backoff** pill (and a **cached** pill), the panel's **Status** tab shows
+`backoff Ns`, and after `API_RATE_LIMIT_BACKOFF_MS` Above Live tries the API again automatically.
+No restart needed. (`MOCK fallback` only appears when there's no cached real data at all.)
 
 ---
 

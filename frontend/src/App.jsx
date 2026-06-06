@@ -58,6 +58,9 @@ export default function App() {
     const feed = createAircraftFeed({
       onData: (data) => {
         setAircraft(data.aircraft || []);
+        // Backend trail snapshot — retained for future history/status use. The
+        // renderer now builds smooth trails from per-track motion history, so
+        // this is passed through but not drawn (see SkyRenderer).
         setTrails(data.trails || {});
         if (data.layers) setLayerData(data.layers);
         // Track API state from WS for real-time pill updates (faster than 3s status poll).

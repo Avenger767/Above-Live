@@ -66,8 +66,10 @@ function truthy(v) {
   return ['1', 'true', 'yes', 'on'].includes(String(v).trim().toLowerCase());
 }
 
-// Deep-merge helper so partial saves don't wipe nested defaults.
-function merge(base, override) {
+// Deep-merge helper so partial saves don't wipe nested defaults. Exported so the
+// smoke check can verify that older settings files (missing newer keys) still
+// migrate safely: defaults are the base, the file overrides only present keys.
+export function merge(base, override) {
   const out = Array.isArray(base) ? [...base] : { ...base };
   for (const [k, v] of Object.entries(override || {})) {
     if (v && typeof v === 'object' && !Array.isArray(v) && typeof out[k] === 'object') {

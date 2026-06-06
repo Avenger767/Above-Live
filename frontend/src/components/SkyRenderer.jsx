@@ -59,6 +59,11 @@ function makeStars(count, w, h, seed = 1234) {
   }));
 }
 
+// NOTE: `trails` (the backend trailStore snapshot) is accepted for backward
+// compatibility but is no longer used for drawing — smooth comet trails are now
+// built from each track's own fix history in the motion model (see the trails
+// block in draw()). The prop is kept so the backend trail feed stays available
+// for future history/status features without changing this component's API.
 export default function SkyRenderer({ settings, aircraft, trails, layerData, testPattern }) {
   const canvasRef = useRef(null);
   const wrapRef = useRef(null);

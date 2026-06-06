@@ -89,6 +89,10 @@ async function poll() {
     }
   }
 
+  // Server-side trail history. The frontend now renders smooth trails from its
+  // own per-track motion history, so this snapshot is currently informational —
+  // it's kept on the wire for future history/status features and any non-smooth
+  // client. Cheap to maintain; do not remove without updating those consumers.
   trailStore.setLimit(settings.trailLength);
   trailStore.update(state.aircraft);
   state.trails    = trailStore.snapshot();

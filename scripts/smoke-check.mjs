@@ -394,10 +394,54 @@ async function motionAndNormalizerTests() {
 }
 
 // ---------------------------------------------------------------------------
+// Part E — settings migration (older files merge safely with new defaults)
+// ---------------------------------------------------------------------------
+async function migrationTests() {
+  console.log('\nPart E — settings migration (no network)');
+  const { merge, DEFAULT_SETTINGS } = await import('../backend/settings/settingsStore.js');
+
+  // Simulate an OLD settings file that predates the smooth-motion / display
+  // upgrades: it has no display.maxFps etc. and no motion{} block at all.
+  const oldFile = {
+    home: { name: 'Old Town', lat: 40.0, lon: -75.0 },
+    provider: 'API',
+    rangeNm: 100,
+    display: { theme: 'amber', brightness: 0.8, labels: true, trails: true, aircraftSize: 1.2 },
+    api: { baseUrl: 'https://api.airplanes.live/v2', apiKey: '', pollIntervalMs: 30000, rateLimitBackoffMs: 60000 },
+  };
+  const m = merge(DEFAULT_SETTINGS, oldFile);
+
+  // User's explicit old values survive.
+  check(m.home.name === 'Old Town' && m.provider === 'API' && m.rangeNm === 100,
+    'migration: keeps user values (home/provider/range)');
+  check(m.display.theme === 'amber' && m.display.brightness === 0.8,
+    'migration: keeps user display values (theme/brightness)');
+
+  // New display keys are backfilled from defaults.
+  check(m.display.maxFps === DEFAULT_SETTINGS.display.maxFps, 'migration: display.maxFps backfilled');
+  check(m.display.altitudeColor === DEFAULT_SETTINGS.display.altitudeColor, 'migration: display.altitudeColor backfilled');
+  check(m.display.labelDensity === DEFAULT_SETTINGS.display.labelDensity, 'migration: display.labelDensity backfilled');
+  check(m.display.nearestN === DEFAULT_SETTINGS.display.nearestN, 'migration: display.nearestN backfilled');
+  check(m.display.labelRotationDeg === DEFAULT_SETTINGS.display.labelRotationDeg, 'migration: display.labelRotationDeg backfilled');
+  check(m.display.highlightEmergency === DEFAULT_SETTINGS.display.highlightEmergency, 'migration: display.highlightEmergency backfilled');
+
+  // The whole motion{} block (absent in the old file) comes from defaults.
+  check(m.motion && m.motion.interpolate === true, 'migration: motion.interpolate backfilled');
+  check(m.motion.renderDelayMs === DEFAULT_SETTINGS.motion.renderDelayMs, 'migration: motion.renderDelayMs backfilled');
+  check(m.motion.maxExtrapolationSec === DEFAULT_SETTINGS.motion.maxExtrapolationSec, 'migration: motion.maxExtrapolationSec backfilled');
+  check(m.motion.staleSec === DEFAULT_SETTINGS.motion.staleSec, 'migration: motion.staleSec backfilled');
+
+  // settingsDebounceMs (added later) is backfilled even though the old api{} omitted it.
+  check(m.api.settingsDebounceMs === DEFAULT_SETTINGS.api.settingsDebounceMs,
+    'migration: api.settingsDebounceMs backfilled (old file kept its poll/backoff)');
+}
+
+// ---------------------------------------------------------------------------
 console.log(`Above Live — smoke check (port ${PORT})`);
 await integrationTests();
 await unitTests();
 await apiProviderTests();
 await motionAndNormalizerTests();
+await migrationTests();
 console.log(failed ? '\nSMOKE CHECK FAILED' : '\nSMOKE CHECK PASSED');
 process.exit(failed ? 1 : 0);
