@@ -18,11 +18,24 @@ export const DEFAULT_SETTINGS = {
   updateIntervalMs: 1000,
   trailLength: 30,
   display: { theme: 'night', brightness: 1, labels: true, trails: true, aircraftSize: 1 },
-  layers: { aircraft: true, satellites: false, weather: false },
   calibration: { offsetX: 0, offsetY: 0, scale: 1, rotation: 0, flipH: false, flipV: false },
-  api: { adapter: 'airplaneslive', baseUrl: '', apiKey: '' },
-  localAdsb: { url: 'http://localhost:8080/data/aircraft.json', path: '' },
+  api: { baseUrl: 'https://api.airplanes.live/v2', apiKey: '', pollIntervalMs: 30000, rateLimitBackoffMs: 60000 },
+  localAdsb: { url: 'http://localhost:8080/data/aircraft.json', path: '', pollIntervalMs: 1000 },
+
+  // Optional display layers. Aircraft is the mission; the rest are OFF by
+  // default. "stars" is a free local starfield (no network) so it's on.
+  layers: { aircraft: true, weather: false, satellites: false, space: false, stars: true },
+
+  // Per-layer config (only used when the matching layer is enabled).
+  weather: { provider: 'openmeteo', pollIntervalMs: 300000 },
+  satellites: { provider: 'iss', pollIntervalMs: 10000 },
+  space: { pollIntervalMs: 3600000 },
 };
+
+// Interpret common truthy strings from env vars ("1", "true", "yes", "on").
+function truthy(v) {
+  return ['1', 'true', 'yes', 'on'].includes(String(v).trim().toLowerCase());
+}
 
 // Deep-merge helper so partial saves don't wipe nested defaults.
 function merge(base, override) {
@@ -37,18 +50,38 @@ function merge(base, override) {
   return out;
 }
 
-// Apply environment overrides on top of file settings. Env always wins.
+// Apply environment overrides on top of file settings.
 function applyEnv(settings) {
   const s = merge(DEFAULT_SETTINGS, settings);
-  if (process.env.PROVIDER)       s.provider          = process.env.PROVIDER;
-  if (process.env.API_PROVIDER)   s.api.adapter       = process.env.API_PROVIDER.toLowerCase();
-  if (process.env.API_BASE_URL)   s.api.baseUrl       = process.env.API_BASE_URL;
-  if (process.env.API_KEY)        s.api.apiKey        = process.env.API_KEY;
-  if (process.env.HOME_LAT)       s.home.lat          = Number(process.env.HOME_LAT);
-  if (process.env.HOME_LON)       s.home.lon          = Number(process.env.HOME_LON);
-  if (process.env.RANGE_NM)       s.rangeNm           = Number(process.env.RANGE_NM);
-  if (process.env.LOCAL_ADSB_URL) s.localAdsb.url     = process.env.LOCAL_ADSB_URL;
-  if (process.env.LOCAL_ADSB_PATH) s.localAdsb.path   = process.env.LOCAL_ADSB_PATH;
+  if (process.env.PROVIDER) s.provider = process.env.PROVIDER;
+  if (process.env.API_BASE_URL) s.api.baseUrl = process.env.API_BASE_URL;
+  if (process.env.API_KEY) s.api.apiKey = process.env.API_KEY;
+  if (process.env.API_POLL_INTERVAL_MS) s.api.pollIntervalMs = Number(process.env.API_POLL_INTERVAL_MS);
+  if (process.env.API_RATE_LIMIT_BACKOFF_MS)
+    s.api.rateLimitBackoffMs = Number(process.env.API_RATE_LIMIT_BACKOFF_MS);
+  if (process.env.LOCAL_ADSB_URL) s.localAdsb.url = process.env.LOCAL_ADSB_URL;
+  // Accept both LOCAL_ADSB_PATH and LOCAL_ADSB_FILE for the on-disk source.
+  if (process.env.LOCAL_ADSB_PATH) s.localAdsb.path = process.env.LOCAL_ADSB_PATH;
+  if (process.env.LOCAL_ADSB_FILE) s.localAdsb.path = process.env.LOCAL_ADSB_FILE;
+  if (process.env.LOCAL_ADSB_POLL_INTERVAL_MS)
+    s.localAdsb.pollIntervalMs = Number(process.env.LOCAL_ADSB_POLL_INTERVAL_MS);
+
+  // Optional layer enables + config (env wins; all off by default).
+  if (process.env.WEATHER_ENABLED) s.layers.weather = truthy(process.env.WEATHER_ENABLED);
+  if (process.env.WEATHER_PROVIDER) s.weather.provider = process.env.WEATHER_PROVIDER;
+  if (process.env.WEATHER_POLL_INTERVAL_MS)
+    s.weather.pollIntervalMs = Number(process.env.WEATHER_POLL_INTERVAL_MS);
+
+  if (process.env.SATELLITES_ENABLED) s.layers.satellites = truthy(process.env.SATELLITES_ENABLED);
+  if (process.env.SATELLITE_PROVIDER) s.satellites.provider = process.env.SATELLITE_PROVIDER;
+  if (process.env.SATELLITE_POLL_INTERVAL_MS)
+    s.satellites.pollIntervalMs = Number(process.env.SATELLITE_POLL_INTERVAL_MS);
+
+  if (process.env.SPACE_ENABLED) s.layers.space = truthy(process.env.SPACE_ENABLED);
+  if (process.env.SPACE_POLL_INTERVAL_MS)
+    s.space.pollIntervalMs = Number(process.env.SPACE_POLL_INTERVAL_MS);
+
+  if (process.env.STARS_ENABLED) s.layers.stars = truthy(process.env.STARS_ENABLED);
   return s;
 }
 

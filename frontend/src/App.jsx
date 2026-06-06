@@ -17,8 +17,7 @@ export default function App() {
   const [status, setStatus] = useState(null);
   const [aircraft, setAircraft] = useState([]);
   const [trails, setTrails] = useState({});
-  const [space, setSpace] = useState([]);
-  const [weather, setWeather] = useState(null);
+  const [layerData, setLayerData] = useState({ weather: null, satellites: [], space: null, stars: true });
   const [connectionMode, setConnectionMode] = useState('connecting');
   const [panelOpen, setPanelOpen] = useState(true);
   const [tab, setTab] = useState('display'); // display | calibration | status
@@ -58,8 +57,7 @@ export default function App() {
       onData: (data) => {
         setAircraft(data.aircraft || []);
         setTrails(data.trails || {});
-        if (data.space !== undefined) setSpace(data.space || []);
-        if (data.weather !== undefined) setWeather(data.weather);
+        if (data.layers) setLayerData(data.layers);
       },
       onConnection: setConnectionMode,
     });
@@ -103,8 +101,7 @@ export default function App() {
         settings={settings}
         aircraft={aircraft}
         trails={trails}
-        space={space}
-        weather={weather}
+        layerData={layerData}
         testPattern={testPattern}
       />
 
@@ -118,12 +115,6 @@ export default function App() {
           {status?.usingFallback && <span className="pill warn-pill">MOCK fallback</span>}
           <span className="pill">{(status?.effectiveProvider || settings.provider)}</span>
           <span className="pill">{aircraft.length} ac</span>
-          {settings.layers?.satellites !== false && space.length > 0 && (
-            <span className="pill">{space.length} sat</span>
-          )}
-          {settings.layers?.weather !== false && weather && (
-            <span className="pill">{weather.tempF}°F</span>
-          )}
           <button className="icon-btn" onClick={() => setPanelOpen((v) => !v)} title="Toggle panel">
             {panelOpen ? '✕' : '☰'}
           </button>

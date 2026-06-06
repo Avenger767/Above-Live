@@ -1,0 +1,53 @@
+{
+  "now": 1710000000.0,
+  "messages": 123456,
+  "aircraft": [
+    {
+      "hex": "a1b2c3",
+      "flight": "AAL123  ",
+      "lat": 32.81,
+      "lon": -96.85,
+      "alt_baro": 34000,
+      "alt_geom": 34250,
+      "gs": 430,
+      "track": 180,
+      "squawk": "1200",
+      "category": "A3",
+      "t": "A321",
+      "seen": 0.1,
+      "seen_pos": 0.2,
+      "rssi": -12.3
+    },
+    {
+      "hex": "d4e5f6",
+      "flight": "SWA88",
+      "lat": 32.70,
+      "lon": -96.74,
+      "alt_baro": "ground",
+      "gs": 14,
+      "track": 90,
+      "t": "B738",
+      "seen": 0.5
+    },
+    {
+      "hex": "778899",
+      "flight": "N12345",
+      "lat": 32.9,
+      "lon": -96.6,
+      "alt_geom": 5500,
+      "gs": 120,
+      "track": 270,
+      "t": "C172",
+      "seen": 1.2
+    },
+    {
+      "hex": "000abc",
+      "flight": "NOPOS1",
+      "alt_baro": 38000,
+      "gs": 470,
+      "track": 45,
+      "t": "B77W",
+      "seen": 3.0
+    }
+  ]
+}

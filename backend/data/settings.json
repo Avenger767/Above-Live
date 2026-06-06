@@ -15,11 +15,6 @@
     "trails": true,
     "aircraftSize": 1
   },
-  "layers": {
-    "aircraft": true,
-    "satellites": false,
-    "weather": false
-  },
   "calibration": {
     "offsetX": 0,
     "offsetY": 0,
@@ -29,12 +24,32 @@
     "flipV": false
   },
   "api": {
-    "adapter": "airplaneslive",
-    "baseUrl": "",
-    "apiKey": ""
+    "baseUrl": "https://api.airplanes.live/v2",
+    "apiKey": "",
+    "pollIntervalMs": 30000,
+    "rateLimitBackoffMs": 60000
   },
   "localAdsb": {
     "url": "http://localhost:8080/data/aircraft.json",
-    "path": ""
+    "path": "",
+    "pollIntervalMs": 1000
+  },
+  "layers": {
+    "aircraft": true,
+    "weather": false,
+    "satellites": false,
+    "space": false,
+    "stars": true
+  },
+  "weather": {
+    "provider": "openmeteo",
+    "pollIntervalMs": 300000
+  },
+  "satellites": {
+    "provider": "iss",
+    "pollIntervalMs": 10000
+  },
+  "space": {
+    "pollIntervalMs": 3600000
   }
 }

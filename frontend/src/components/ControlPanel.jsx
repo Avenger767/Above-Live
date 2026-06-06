@@ -7,10 +7,21 @@ import { THEMES, THEME_KEYS } from '../lib/themes.js';
 
 const PROVIDERS = ['MOCK', 'API', 'LOCAL_ADSB'];
 
+// Optional display layers. Aircraft is the mission and is always on, so it's
+// shown as a fixed (disabled) row rather than a toggle you can switch off.
+const LAYER_TOGGLES = [
+  { key: 'stars', label: 'Stars' },
+  { key: 'weather', label: 'Weather' },
+  { key: 'satellites', label: 'Satellites / ISS' },
+  { key: 'space', label: 'Space / Planets' },
+];
+
 export default function ControlPanel({ settings, onChange, onToggleFullscreen, onReset, onOpenCalibration }) {
   const d = settings.display;
+  const layers = settings.layers || {};
 
   const setDisplay = (patch) => onChange({ display: { ...d, ...patch } });
+  const setLayer = (key, value) => onChange({ layers: { ...layers, [key]: value } });
 
   return (
     <div className="panel-section">
@@ -26,13 +37,6 @@ export default function ControlPanel({ settings, onChange, onToggleFullscreen, o
           ))}
         </select>
       </label>
-
-      {settings.provider === 'API' && (
-        <div className="hint">
-          Adapter: <b>{settings.api?.adapter || 'airplaneslive'}</b>
-          {' — '}set <code>PROVIDER=API</code> in <code>backend/.env</code> to activate.
-        </div>
-      )}
 
       <label className="field">
         <span>Range</span>
@@ -91,6 +95,26 @@ export default function ControlPanel({ settings, onChange, onToggleFullscreen, o
         <span>Trails</span>
         <input type="checkbox" checked={d.trails} onChange={(e) => setDisplay({ trails: e.target.checked })} />
       </label>
+
+      <h3>Layers</h3>
+
+      <label className="field toggle">
+        <span>Aircraft</span>
+        <input type="checkbox" checked readOnly title="Aircraft is the primary layer" />
+      </label>
+      {LAYER_TOGGLES.map((l) => (
+        <label className="field toggle" key={l.key}>
+          <span>{l.label}</span>
+          <input
+            type="checkbox"
+            checked={Boolean(layers[l.key])}
+            onChange={(e) => setLayer(l.key, e.target.checked)}
+          />
+        </label>
+      ))}
+      <p className="field-hint">
+        Optional layers are off by default and never affect the aircraft display.
+      </p>
 
       <div className="btn-row">
         <button className="btn" onClick={onToggleFullscreen}>

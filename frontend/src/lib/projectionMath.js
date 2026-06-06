@@ -41,39 +41,6 @@ export function makeProjector({ home, rangeNm, center, radiusPx, calibration }) 
   };
 }
 
-// Build a sky-dome projector for satellites / the ISS.
-// Maps az/el (where an object actually is overhead) onto the radar disc:
-// the zenith (straight up, el=90) sits at the center and the horizon (el=0)
-// at the outer ring — the natural view when projecting onto a ceiling.
-// Applies the same calibration transforms as makeProjector so the satellite
-// layer stays aligned with the aircraft map and the projected surface.
-export function makeSkyProjector({ center, radiusPx, calibration }) {
-  const cal = calibration || {};
-  const scale = cal.scale ?? 1;
-  const rot = ((cal.rotation ?? 0) * Math.PI) / 180;
-  const flipH = cal.flipH ? -1 : 1;
-  const flipV = cal.flipV ? -1 : 1;
-
-  return function projectSky(azimuthDeg, elevationDeg) {
-    // Distance from zenith: clamp below horizon so it parks at the rim.
-    const el = Math.max(0, Math.min(90, elevationDeg));
-    const r = (radiusPx * (90 - el)) / 90;
-    const az = (azimuthDeg * Math.PI) / 180;
-
-    // North (az=0) points up (-y), East (az=90) to the right (+x).
-    let x = r * Math.sin(az) * scale * flipH;
-    let y = -r * Math.cos(az) * scale * flipV;
-
-    const rx = x * Math.cos(rot) - y * Math.sin(rot);
-    const ry = x * Math.sin(rot) + y * Math.cos(rot);
-
-    return {
-      x: center.x + rx + (cal.offsetX ?? 0),
-      y: center.y + ry + (cal.offsetY ?? 0),
-    };
-  };
-}
-
 // Adjust a heading so the drawn aircraft glyph matches the rotated/flipped map.
 export function projectHeading(headingDeg, calibration) {
   const cal = calibration || {};

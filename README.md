@@ -1,17 +1,14 @@
 # Above Live
 
-A browser-based **live aircraft sky / radar display** that runs on a laptop or a Raspberry Pi 4
-(or any computer) and shows aircraft moving around a configurable home location. View it on a
-normal monitor today; project it onto a ceiling or wall later.
+A browser-based **live aircraft sky / radar display** that runs on a Raspberry Pi 4 (or any
+computer) and shows aircraft moving around a configurable home location. View it on a normal
+monitor today; project it onto a ceiling or wall later.
 
-**V1 is aircraft-only and works immediately with mock data** — no ADS-B hardware, no antenna, no
-projector, and no paid internet API required. It's built so you can switch to a real internet
-flight API or local ADS-B (dump1090/readsb) data later, with no change to the renderer.
+Above Live works **immediately with mock data** — no ADS-B hardware, no antenna, no projector,
+and no paid internet API required. It's built so you can switch to a real internet flight API
+or local ADS-B (dump1090/readsb) data later, with no change to the renderer.
 
-It is **cross-platform**: the same project runs on a laptop (macOS / Windows / Linux) and on a
-Raspberry Pi 4 using only standard **Node.js, Express, React, Vite, HTML Canvas, and browser
-APIs** — no Pi-only dependencies. Develop and test on your laptop, then copy the folder to the
-Pi and run it there unchanged.
+![concept](https://placehold.co/10x10/04060d/04060d.png)
 
 ---
 
@@ -21,61 +18,71 @@ Pi and run it there unchanged.
   HTML Canvas frontend draws them on a glowing radar/sky display.
 - **Three swappable aircraft providers**:
   1. **MOCK** — fake aircraft that drift smoothly around your home location. Default. Always works.
-  2. **API** — scaffold for a future internet flight API (you supply the URL + key later).
-  3. **LOCAL_ADSB** — reads a dump1090/readsb `aircraft.json` feed for real local traffic later.
+  2. **API** — a free internet flight API (Airplanes.live by default) with caching + 429 backoff.
+  3. **LOCAL_ADSB** — reads a dump1090/readsb `aircraft.json` feed (HTTP or file) from your own
+     RTL-SDR dongle + 1090 MHz antenna, with caching and graceful fallback.
 - If API or ADS-B data is unavailable, Above Live **falls back to MOCK automatically** and tells
-  you in the Status panel. It never blocks startup.
-- Controls, calibration, and fullscreen mode for getting the picture right on a monitor or a
-  projected surface.
+  you in the status panel. It never blocks startup.
+- **Optional display layers** — weather, satellites/ISS, space (moon/sun/planets), and a starfield.
+  All **off by default** (except stars), each isolated so aircraft always work (see §11d).
 - No login, no cloud database, no payment system, no required hardware for testing.
 
-> **Not in V1 (and not required):** satellite / ISS tracking and weather overlays. The code for
-> these still ships but is **off by default** and produces no network calls or warnings on
-> startup. See [§13](#13-optional-satellites--weather-off-by-default) if you ever want to switch
-> them on.
-
 ---
 
-## 2. Requirements
+## 2. Install dependencies
 
 You need **Node.js 18+** (includes `npm` and a global `fetch`). Check with `node -v`.
-
-That's it for V1 — just Node.js and a modern browser (Chrome/Chromium recommended).
-
----
-
-## 3. Run on a laptop (development)
 
 ```bash
 cd above-live
 
-# Install dependencies (once)
+# Backend
 cd backend && npm install && cd ..
+
+# Frontend
 cd frontend && npm install && cd ..
 ```
 
-Start both servers. **One-command option** from the project root:
+---
+
+## 3. Run the backend
 
 ```bash
-./scripts/start-dev.sh
+cd backend
+npm run dev
 ```
 
-…or run them in two terminals:
+You should see logs like:
 
-```bash
-# Terminal 1 — backend (REST API + WebSocket on port 4000)
-cd backend && npm run dev
-
-# Terminal 2 — frontend (Vite dev server on port 5173)
-cd frontend && npm run dev
+```
+  Above Live — backend
+  home:     Dallas, TX (32.7767, -96.797)
+  provider: MOCK
+[server] listening on http://localhost:4000
+[provider] active: MOCK | aircraft: 11
 ```
 
-In dev mode the Vite dev server hosts the UI on **5173** and proxies `/api` and `/ws` to the
-backend on **4000**, so you don't configure anything.
+The backend serves the REST API and the WebSocket on **port 4000**.
 
 ---
 
-## 4. Test with mock aircraft data
+## 4. Run the frontend
+
+In a second terminal:
+
+```bash
+cd frontend
+npm run dev
+```
+
+Vite prints a local URL (default **http://localhost:5173**). The frontend proxies `/api` and
+`/ws` to the backend automatically, so you don't need to configure anything.
+
+> **One-command option:** from the project root run `./scripts/start-dev.sh` to start both at once.
+
+---
+
+## 5. Test with mock aircraft data
 
 Mock mode is the **default**, so as soon as both servers are running you'll see ~8–12 aircraft
 drifting around your home location with callsigns, altitude (as flight levels), speed, distance,
@@ -90,119 +97,28 @@ curl http://localhost:4000/api/aircraft
 
 ---
 
-## 5. Open the display on a regular monitor
+## 6. Open on a normal monitor
 
-Open **http://localhost:5173** in any modern browser on the laptop. The display scales to fill
-the window and is fully responsive.
+Just open **http://localhost:5173** in any modern browser (Chrome/Chromium recommended) on the
+machine running the frontend. The display scales to fill the window and is fully responsive.
 
-To view from **another device on your network**, use the laptop's IP, e.g.
+To view from **another device on your network**, use the Pi/computer's IP, e.g.
 `http://192.168.1.50:5173` (the dev server already listens on all interfaces).
 
-**Fullscreen:** click **☰** (top-right), go to **Display → Fullscreen**, or press `F11`. Press
-`Esc` (or `F11`) to exit. Great for a dedicated monitor.
+---
+
+## 7. Fullscreen mode
+
+Click **☰** (top-right) to open the panel, go to **Display → Fullscreen**, or press your
+browser's fullscreen key (usually `F11`). The "Fullscreen" button uses the browser Fullscreen
+API and works great for a dedicated display. Press `Esc` (or `F11`) to exit.
 
 ---
 
-## 6. Smoke check (verify it works)
+## 8. Change home location
 
-A one-shot check that starts the backend, confirms it responds, and confirms mock aircraft are
-flowing. Pure Node, so it runs the same on a laptop or a Pi:
-
-```bash
-# from the project root
-node scripts/smoke-check.mjs
-
-# …or from the backend folder
-cd backend && npm run smoke
-```
-
-Expected output:
-
-```
-Above Live — smoke check (port 4100)
-Starting backend...
-  PASS  backend starts and responds
-  PASS  /api/status backend = "ok" (got "ok")
-  PASS  /api/status reports a provider (MOCK)
-  PASS  /api/aircraft returns aircraft (count = 9)
-
-SMOKE CHECK PASSED
-```
-
-It uses a side port (4100) so it won't clash with a server you already have running.
-
----
-
-## 7. Run on a Raspberry Pi (production, single port)
-
-In production the **backend serves everything on one port (4000)**: the built frontend (UI), the
-REST API, and the WebSocket. You open a single URL — no second server, no proxy.
-
-1. Install Node.js 18+ on the Pi:
-   ```bash
-   curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-   sudo apt install -y nodejs
-   ```
-2. Copy the `above-live` folder to the Pi (USB stick, `scp`, or `git clone`). **Don't copy the
-   `node_modules` folders** — they're reinstalled per machine.
-3. From the project root:
-   ```bash
-   ./scripts/start-pi.sh
-   ```
-   This installs dependencies if missing, **builds the frontend** into `frontend/dist`, then
-   starts the backend in production mode serving everything. It prints the URLs:
-   ```
-   On this machine:        http://localhost:4000
-   From another device:    http://<pi-ip>:4000
-   ```
-4. Open **http://localhost:4000** on the Pi, or `http://<pi-ip>:4000` from another device.
-
-> Under the hood `start-pi.sh` runs the backend with `NODE_ENV=production`, which makes it serve
-> `frontend/dist`. You can do the same manually: `cd frontend && npm run build`, then
-> `cd ../backend && NODE_ENV=production npm start`.
-
-The Pi 4 handles the canvas renderer comfortably. Lower the **Range** or turn off **Trails** in
-the panel to save a few cycles on a very busy feed.
-
----
-
-## 8. Moving from laptop to Raspberry Pi (summary)
-
-The project is identical on both machines. The recommended path:
-
-1. Develop + test on the laptop with `./scripts/start-dev.sh` (§3–6).
-2. Copy the folder to the Pi (skip `node_modules`). Your `backend/data/settings.json` (home
-   location, range, calibration) copies over, so the Pi comes up configured like your laptop.
-3. On the Pi, run `./scripts/start-pi.sh` and open `http://localhost:4000`.
-
----
-
-## 9. Chromium kiosk mode (dedicated ceiling/wall display)
-
-For a dedicated display, run Above Live fullscreen with no browser chrome:
-
-```bash
-# Make sure Above Live is already running (e.g. ./scripts/start-pi.sh in another terminal)
-./scripts/start-kiosk.sh
-```
-
-This launches Chromium with `--kiosk` pointed at **http://localhost:4000**. Override the URL with
-`ABOVE_LIVE_URL=http://...  ./scripts/start-kiosk.sh`.
-
-To auto-start on boot, add the kiosk script to your Pi's autostart (e.g. an entry in
-`~/.config/lxsession/LXDE-pi/autostart` or a systemd user service). Install Chromium first with
-`sudo apt install chromium-browser`.
-
-**Calibration tip:** open the side panel → **Calibration**, enable the **Test pattern**, then use
-**Offset X/Y**, **Scale**, **Rotation**, and **Flip** to align the grid/compass to your projected
-surface. The test pattern shows a grid, center dot, outer ring, N/E/S/W markers, and corner
-markers for exact alignment.
-
----
-
-## 10. Change home location
-
-Home location determines the center of the radar. Edit **`backend/data/settings.json`**:
+Home location determines the center of the radar. Edit
+**`backend/data/settings.json`**:
 
 ```json
 "home": { "name": "Your City", "lat": 40.7128, "lon": -74.006 }
@@ -220,7 +136,7 @@ Mock aircraft will reseed around the new location.
 
 ---
 
-## 11. Switch data providers
+## 9. Switch data providers
 
 Three ways:
 
@@ -231,158 +147,318 @@ Three ways:
 If the chosen provider can't get data, the **Status** tab shows a "MOCK fallback" warning and the
 display keeps running on mock data.
 
-### 11a. Connect a real internet flight API
+---
 
-The API provider uses an **adapter** system. Four adapters are included:
+## 10. Connect an internet flight API (Airplanes.live by default)
 
-| Adapter | `API_PROVIDER=` | Free? | Key needed? |
-|---------|-----------------|-------|-------------|
-| **Airplanes.live** | `airplaneslive` | Yes | No |
-| **OpenSky Network** | `opensky` | Yes (rate-limited) | No (optional) |
-| **ADS-B Exchange** | `adsbexchange` | RapidAPI plan | Yes |
-| **Generic REST** | `generic` | Up to your API | Optional |
-
-**Quickest start — Airplanes.live (free, no key):**
+The `API` provider ships configured for the **free Airplanes.live** point API — no key required.
+To turn it on:
 
 ```bash
 cd backend
-cp .env.example .env
+cp .env.example .env      # optional; defaults already point at Airplanes.live
 ```
+Then either set `PROVIDER=API` in `.env`, or pick **API** in the panel's Provider dropdown.
 
-Then set in `.env`:
-```
-PROVIDER=API
-# API_PROVIDER=airplaneslive  ← this is already the default, no need to set
-```
+Above Live queries `{API_BASE_URL}/point/{home.lat}/{home.lon}/{rangeNm}` and reads the `ac[]`
+array (the readsb/tar1090 schema). The normalizer maps the fields (`hex`, `flight`, `lat`,
+`lon`, `alt_baro`, `gs`, `track`, `t`) into the internal format and converts `"ground"`
+altitude to `0`.
 
-Restart the backend and run the connectivity test:
+**Rate limiting — this is the important part.** Public flight APIs throttle aggressively.
+Above Live protects you automatically:
 
-```bash
-curl http://localhost:4000/api/provider-test
-```
+- **Cached polling.** The backend calls the external API only once every `API_POLL_INTERVAL_MS`
+  (default **30000 = 30s**). The WebSocket/poll loop still updates the display ~once per second,
+  but it serves **cached** aircraft between those fetches. The external API is *never* called on
+  the 1-second loop.
+- **429 backoff.** If the API returns HTTP 429, Above Live stops calling it for at least
+  `API_RATE_LIMIT_BACKOFF_MS` (default **60000 = 60s**) and keeps showing the last successful
+  real aircraft from cache.
+- **Cache preferred over mock.** It only falls back to MOCK when there is *no* cached API data
+  at all (e.g. the very first request was rate-limited).
+- **One source of truth.** All external calls happen in `apiProvider.js`. Nothing else (status,
+  the WebSocket loop, even `/api/provider-test` while backing off) makes extra calls.
 
-Expected when working:
-```json
-{ "success": true, "adapter": "airplaneslive", "adapterLabel": "Airplanes.live",
-  "configured": true, "aircraftCount": 45, "sample": [...], "error": null }
-```
+Tunable via `.env` (or `settings.json` under `"api"`):
 
-**OpenSky Network (free anonymous):**
-```
-PROVIDER=API
-API_PROVIDER=opensky
-# Optional — free account raises rate limits:
-# API_KEY=youruser:yourpassword
-```
-
-**ADS-B Exchange (RapidAPI key):**
 ```
 PROVIDER=API
-API_PROVIDER=adsbexchange
-API_KEY=your_rapidapi_key_here
+API_BASE_URL=https://api.airplanes.live/v2
+API_POLL_INTERVAL_MS=30000        # how often to actually hit the API
+API_RATE_LIMIT_BACKOFF_MS=60000   # how long to wait after an HTTP 429
+# API_KEY=                        # only for APIs that require a bearer key
 ```
 
-**Generic REST API:**
-```
-PROVIDER=API
-API_PROVIDER=generic
-API_BASE_URL=https://your-flight-api.example.com
-API_KEY=your_bearer_token_here   # optional
-```
-
-You can also override home location and range without editing `settings.json`:
-```
-HOME_LAT=51.5074
-HOME_LON=-0.1278
-RANGE_NM=80
-```
-
-Every record is run through `aircraftNormalizer.js`, which already maps common field names
-(`lat/latitude`, `gs/groundspeed/velocity`, `track/heading`, `alt_baro/altitude`, etc.) into
-the internal format. If your API uses different field names, add them there.
-
-If configuration is missing or the request fails, Above Live falls back to MOCK automatically and
-shows a warning in the Status panel.
-
-### 11b. Later: connect dump1090 / readsb (`aircraft.json`)
-
-If you add an SDR + antenna and run dump1090-fa or readsb, point Above Live at its feed:
-
-- **Over HTTP** (most common — dump1090 serves a small JSON file):
-  ```
-  PROVIDER=LOCAL_ADSB
-  LOCAL_ADSB_URL=http://localhost:8080/data/aircraft.json
-  ```
-- **Or directly from the file on disk:**
-  ```
-  PROVIDER=LOCAL_ADSB
-  LOCAL_ADSB_PATH=/run/dump1090-fa/aircraft.json
-  ```
-
-The provider already understands the dump1090/readsb schema (`hex`, `flight`, `lat`, `lon`,
-`alt_baro`, `gs`, `track`) and converts the `"ground"` altitude value to `0`. If the feed is
-unreachable, it falls back to MOCK.
+**Using a different API?** Edit `buildUrl()` and the response-array line in
+`backend/aircraft/providers/apiProvider.js`, and add any new field names to
+`aircraftNormalizer.js`. The caching/backoff layer stays the same.
 
 ---
 
-## 12. What is NOT required for V1
+## 11. Local ADS-B with a USB dongle (`LOCAL_ADSB`)
 
-Everything below is **optional**. V1 runs and demos fully without any of it:
+This is for a real RTL-SDR (or similar) USB dongle + 1090 MHz antenna. **Above Live does not
+decode raw radio.** You run a standard decoder — **dump1090-fa**, **readsb**, or **tar1090** —
+which produces a small `aircraft.json`, and Above Live reads decoded aircraft from it.
+
+### 11a. Setup assumptions
+
+You have a decoder running and serving (or writing) `aircraft.json`. Typical installs:
+
+- **dump1090-fa** (FlightAware): serves `http://<host>:8080/data/aircraft.json` and also writes
+  `/run/dump1090-fa/aircraft.json`.
+- **readsb**: writes `/run/readsb/aircraft.json` (often served under `/tar1090/data/`).
+- **tar1090**: serves `http://<host>/tar1090/data/aircraft.json`.
+
+Quick install on the Pi (one common path):
+```bash
+sudo bash -c "$(wget -O - https://raw.githubusercontent.com/flightaware/piaware/master/install.sh)"
+# or the readsb installer of your choice
+```
+Confirm the feed is alive first, independent of Above Live:
+```bash
+curl http://localhost:8080/data/aircraft.json | head
+```
+
+### 11b. Point Above Live at the feed
+
+Set **one** of these (URL is preferred if both are present). In `backend/.env`:
+
+```
+PROVIDER=LOCAL_ADSB
+# Option 1 — HTTP endpoint (most common). Common locations:
+LOCAL_ADSB_URL=http://localhost:8080/data/aircraft.json
+#   http://localhost:8080/tar1090/data/aircraft.json
+#   http://localhost/dump1090-fa/data/aircraft.json
+# Option 2 — read the file on disk directly (leave URL empty to use this):
+# LOCAL_ADSB_PATH=/run/dump1090-fa/aircraft.json   (or /run/readsb/aircraft.json)
+# How often to read the local feed (local data is cheap):
+LOCAL_ADSB_POLL_INTERVAL_MS=1000
+```
+
+`LOCAL_ADSB_FILE` is accepted as an alias for `LOCAL_ADSB_PATH`. You can also pick **LOCAL_ADSB**
+from the panel's Provider dropdown.
+
+The provider understands the dump1090/readsb schema (`hex`, `flight`, `lat`, `lon`, `alt_baro`,
+`alt_geom`, `gs`, `track`, `squawk`, `t`/`type`, `category`, `seen`, `seen_pos`, `rssi`), drops
+records with no position, and coerces `"ground"` altitude to `0`. It **caches** the last good
+snapshot, so a single dropped read keeps the picture up briefly instead of flapping; only when
+there's no usable data does it fall back to MOCK.
+
+### 11c. Test it (before and after the dongle arrives)
+
+```bash
+# Status — shows configured / sourceType (url|file|none) / source / last read / errors
+curl -s http://localhost:4000/api/status | python3 -m json.tool | grep -A8 localAdsb
+
+# One-shot connectivity test of the LOCAL_ADSB feed specifically:
+curl -s "http://localhost:4000/api/provider-test?provider=LOCAL_ADSB" | python3 -m json.tool
+```
+A healthy feed returns `"success": true` with a live `aircraftCount` and a few `sample` aircraft.
+If it's not set up yet you'll get a clear `configured:false` / error message — and the main
+display simply keeps running on MOCK.
+
+You can rehearse the parsing **without hardware** by pointing it at the bundled sample file:
+```bash
+PROVIDER=LOCAL_ADSB LOCAL_ADSB_URL= LOCAL_ADSB_PATH=$(pwd)/backend/test/fixtures/aircraft.sample.json \
+  npm --prefix backend start
+```
+
+---
+
+## 11d. Optional display layers (weather, satellites, space, stars)
+
+Above Live's mission is **aircraft**. Everything below is an **optional layer**, **off by default**
+(except the local star background). Each layer has its **own cache + backoff**, runs on its own
+timer, uses **simple mock/demo data** when a real source isn't configured, and **never blocks or
+crashes the aircraft display** — if every layer fails, aircraft keep flying.
+
+Toggle them in the panel under **Display → Layers**, or enable via env/settings.
+
+**Weather** — centered on home. Default provider **Open-Meteo** (free, no key); set
+`WEATHER_PROVIDER=mock` for offline demo data. Shows a subtle corner card (temperature,
+condition, cloud %, wind, visibility), a wind arrow, a faint cloud wash scaled to cloud cover, and
+a light rain tint when precipitation is active — all kept low so they never overpower aircraft.
+```
+WEATHER_ENABLED=true
+WEATHER_PROVIDER=openmeteo
+WEATHER_POLL_INTERVAL_MS=300000
+```
+
+**Satellites / ISS** — default provider **iss** fetches the ISS position from the free
+wheretheiss.at API (no key); `SATELLITE_PROVIDER=mock` shows demo satellites near home. Satellites
+draw with a distinct icon and blue/white glow (clearly not aircraft) and label when labels are on.
+Most real passes fall outside the radar range and show in the status panel rather than on-screen.
+```
+SATELLITES_ENABLED=true
+SATELLITE_PROVIDER=iss
+SATELLITE_POLL_INTERVAL_MS=10000
+```
+
+**Space / Planets** — a no-network scaffold computed locally: moon phase + illumination, a simple
+day/night indicator with approximate sunrise/sunset, and a placeholder visible-planets list, shown
+in a small corner card.
+```
+SPACE_ENABLED=true
+SPACE_POLL_INTERVAL_MS=3600000
+```
+
+**Stars** — a local generated starfield background (no network). On by default; toggle with
+`STARS_ENABLED=false`.
+
+Layer status (configured / ok / last update / errors) appears in the **Status** tab, and each
+layer has a read-only endpoint: `/api/weather`, `/api/satellites`, `/api/space`.
+
+> **Guarantee:** optional layers are isolated. Aircraft remain primary and keep working even if
+> weather, satellite, and space sources are all unreachable.
+
+---
+
+## 12. Run on a Raspberry Pi
+
+1. Install Node.js 18+ on the Pi:
+   ```bash
+   curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+   sudo apt install -y nodejs
+   ```
+2. Copy the `above-live` folder to the Pi.
+3. From the project root:
+   ```bash
+   ./scripts/start-pi.sh
+   ```
+   This installs dependencies (if needed), builds the frontend, then runs the backend and serves
+   the built frontend. Open **http://localhost:5173** on the Pi, or `http://<pi-ip>:5173` from
+   another device.
+
+The Pi 4 handles the canvas renderer comfortably. Lower the **Range** or turn off **Trails** in
+the panel if you want to save a few cycles on a very busy feed.
+
+---
+
+## 13. Later: Chromium kiosk mode
+
+For a dedicated ceiling/wall display, run Above Live fullscreen with no browser chrome:
+
+```bash
+# Make sure Above Live is already running (e.g. ./scripts/start-pi.sh in another terminal)
+./scripts/start-kiosk.sh
+```
+
+This launches Chromium with `--kiosk` pointed at `http://localhost:5173`. Override the URL with
+`ABOVE_LIVE_URL=http://...  ./scripts/start-kiosk.sh`.
+
+To auto-start on boot, add the kiosk script to your Pi's autostart (e.g. an entry in
+`~/.config/lxsession/LXDE-pi/autostart` or a systemd user service). Install Chromium first with
+`sudo apt install chromium-browser`.
+
+**Calibration tip:** open the side panel → **Calibration**, enable the **Test pattern**, then use
+**Offset X/Y**, **Scale**, **Rotation**, and **Flip** to align the grid/compass to your projected
+surface. The test pattern shows a grid, center dot, outer ring, N/E/S/W markers, and corner
+markers for exact alignment.
+
+---
+
+## 14. Optional hardware (NOT required for software testing)
+
+Everything below is **optional**. The software runs and demos fully without any of it:
 
 - **Projector** — only needed when you move from a monitor to a ceiling/wall.
 - **RTL-SDR dongle + 1090 MHz antenna** — only for real local ADS-B (`LOCAL_ADSB` provider).
 - **dump1090-fa / readsb** — only if you want to decode that local ADS-B yourself.
 - **Internet flight API subscription** — only for the `API` provider's live worldwide data.
-- **Satellite / ISS tracking and weather overlays** — off by default; not part of the V1 experience.
 - **Raspberry Pi** — recommended target, but Above Live runs on any laptop/desktop too.
 
 For testing and development you need **only Node.js and a browser**.
 
 ---
 
-## 13. Optional: satellites & weather (off by default)
+## Testing API mode & rate limiting (laptop)
 
-V1 focuses on aircraft, but the satellite/ISS and weather layers from earlier development still
-ship in the code, **disabled by default**. While disabled they make **no network calls** and
-print **no warnings** on startup. They are not exposed in the UI; enable them only via settings if
-you want to experiment:
+**1. Start in API mode.** In `backend/.env` set `PROVIDER=API` (defaults already use
+Airplanes.live), then run the backend and frontend as in sections 3–4. Or just pick **API** in
+the panel's Provider dropdown while running.
 
-```json
-"layers": { "aircraft": true, "satellites": true, "weather": true }
+**2. Check `/api/status`:**
+```bash
+curl -s http://localhost:4000/api/status | python3 -m json.tool
 ```
+Look at the `api` block:
+- `adapter` — e.g. `api.airplanes.live`
+- `lastSuccess` — timestamp of the last real fetch (should advance every ~30s)
+- `cached` — `true` only when data is going stale (overdue refresh / backoff)
+- `rateLimited` + `nextRetry` — backoff state and when the next API call is allowed
+- `lastError` — last API error (e.g. the 429 message), or `null`
 
-Edit `backend/data/settings.json` and restart the backend (or POST to `/api/settings`). They use
-free, key-less public APIs (the ISS feed and Open-Meteo) and fall back gracefully with no
-internet. These are experimental extras, not a supported part of V1.
+Top-level `effectiveProvider` should read `API` and `usingFallback` should be `false` whenever
+there is cached real data — even during a backoff.
+
+**3. Check `/api/provider-test`:**
+```bash
+curl -s http://localhost:4000/api/provider-test | python3 -m json.tool
+```
+Returns `success`, `adapter`, `configured`, `aircraftCount`, `usingCache`, `lastSuccess`,
+`lastError`, and `nextRetry`. When healthy you'll see `usingCache:false` and a live count. If
+you've recently been rate-limited it returns `usingCache:true` with a `warning` and `nextRetry`
+**without contacting the API** (so it can't make throttling worse).
+
+**4. Confirm it is NOT over-polling Airplanes.live.** Watch the backend terminal — it logs real
+fetch activity, and on a 429 prints:
+```
+[api] rate limited — backing off 60s (serving N cached aircraft)
+```
+You can also poll `/api/status` a few times within 30 seconds: `aircraftCount` updates smoothly
+every second (cached), but `api.lastSuccess` only changes about once per `API_POLL_INTERVAL_MS`
+(30s). That gap is the proof the external API is hit on the slow cadence, not the 1s loop.
+
+To make over-polling impossible to miss while testing, temporarily lower the interval, e.g.
+`API_POLL_INTERVAL_MS=5000`, and confirm `api.lastSuccess` advances only every ~5s while the
+display keeps updating each second. Set it back to `30000` for normal use.
+
+**If you hit a 429:** the display keeps showing your last real aircraft from cache, the panel's
+**Status** tab shows `backoff → Ns`, and after `API_RATE_LIMIT_BACKOFF_MS` Above Live tries the
+API again automatically. No restart needed.
 
 ---
 
-## Project layout
+
 
 ```
 above-live/
   backend/    Express server, providers, settings, math, trails
-    aircraft/ aircraft providers (mock / api / local_adsb), normalizer, trails
-    space/    (optional, off) ISS + modeled-satellite provider
-    weather/  (optional, off) Open-Meteo current-conditions provider
+    aircraft/ aircraft providers (mock / api / local_adsb) + normalizer
+    layers/   optional layers (weather / satellites / space)
+    test/     sample dump1090/readsb fixture
   frontend/   React + Vite app, canvas renderer, panels
   scripts/    start-dev.sh, start-pi.sh, start-kiosk.sh, smoke-check.mjs
 ```
 
+## Smoke check
+
+A pure-Node check (no network) that verifies MOCK aircraft, the status/provider-test endpoints,
+LOCAL_ADSB parsing of the sample fixture (and the not-configured case), and that optional layers
+stay off/quiet by default:
+
+```bash
+node scripts/smoke-check.mjs      # from the project root
+# or:  cd backend && npm run smoke
+```
+
 ## API reference (quick)
 
-| Method | Path                   | Purpose                                         |
-|--------|------------------------|-------------------------------------------------|
-| GET    | `/api/aircraft`        | Current aircraft snapshot + trails              |
-| GET    | `/api/settings`        | Current settings                                |
-| POST   | `/api/settings`        | Update settings (partial, deep-merged)          |
-| POST   | `/api/settings/reset`  | Reset settings to defaults                      |
-| GET    | `/api/status`          | Provider, counts, API adapter info, health      |
-| GET    | `/api/provider-test`   | One-shot API connectivity test (non-destructive)|
-| WS     | `/ws`                  | Live aircraft stream                            |
-
-(`/api/space` and `/api/weather` also exist but return empty data while those optional layers are
-off.)
+| Method | Path                          | Purpose                                          |
+|--------|-------------------------------|--------------------------------------------------|
+| GET    | `/api/aircraft`               | Current aircraft snapshot + trails + layer data  |
+| GET    | `/api/settings`               | Current settings                                 |
+| POST   | `/api/settings`               | Update settings (partial, deep-merged)           |
+| POST   | `/api/settings/reset`         | Reset settings to defaults                       |
+| GET    | `/api/status`                 | Provider, counts, API + LOCAL_ADSB + layer health|
+| GET    | `/api/provider-test`          | Manual test of the active provider…              |
+| GET    | `/api/provider-test?provider=`| …or a specific one: `MOCK` / `API` / `LOCAL_ADSB`|
+| GET    | `/api/weather`                | Weather layer data + status (when enabled)       |
+| GET    | `/api/satellites`             | Satellite/ISS layer data + status (when enabled) |
+| GET    | `/api/space`                  | Space layer data + status (when enabled)         |
+| WS     | `/ws`                         | Live aircraft + layer stream                     |
 
 ---
 

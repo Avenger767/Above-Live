@@ -13,11 +13,20 @@ function timeAgo(ts) {
   return `${Math.round(s / 60)}m ago`;
 }
 
+function timeUntil(ts) {
+  if (!ts) return '—';
+  const s = Math.max(0, Math.round((ts - Date.now()) / 1000));
+  return s < 60 ? `${s}s` : `${Math.round(s / 60)}m`;
+}
+
 export default function StatusPanel({ status, aircraftCount, connectionMode }) {
   const s = status || {};
   const fallback = s.usingFallback;
-  const isApi = (s.requestedProvider || '').toUpperCase() === 'API';
-  const api = s.api || {};
+  const api = s.api;
+  const apiActive = (s.requestedProvider || '').toUpperCase() === 'API';
+  const local = s.localAdsb;
+  const localActive = (s.requestedProvider || '').toUpperCase() === 'LOCAL_ADSB';
+  const layers = s.layers || {};
 
   return (
     <div className="status">
@@ -35,25 +44,6 @@ export default function StatusPanel({ status, aircraftCount, connectionMode }) {
         <span className="status-key">Requested</span>
         <span className="status-val">{s.requestedProvider || '—'}</span>
       </div>
-
-      {/* API adapter rows — only when API is the requested provider */}
-      {isApi && api.adapterLabel && (
-        <div className="status-row">
-          <span className="status-key">Adapter</span>
-          <span className="status-val">{api.adapterLabel}</span>
-        </div>
-      )}
-      {isApi && (
-        <div className="status-row">
-          <span className="status-key">API key</span>
-          <span className={`status-val ${api.configured ? 'ok' : api.requiresKey ? 'bad' : ''}`}>
-            {api.requiresKey
-              ? api.configured ? 'set' : 'missing'
-              : 'not required'}
-          </span>
-        </div>
-      )}
-
       <div className="status-row">
         <span className="status-key">Aircraft</span>
         <span className="status-val">{aircraftCount ?? s.aircraftCount ?? 0}</span>
@@ -67,33 +57,98 @@ export default function StatusPanel({ status, aircraftCount, connectionMode }) {
         <span className="status-val">{timeAgo(s.lastUpdate)}</span>
       </div>
 
-      {/* Optional layers — only shown when enabled (off by default in V1). */}
-      {s.spaceCount > 0 && (
-        <div className="status-row">
-          <span className="status-key">Satellites</span>
-          <span className={`status-val ${s.spaceError ? 'bad' : ''}`}>{s.spaceCount} tracked</span>
-        </div>
-      )}
-      {(s.weatherOk || s.weatherError) && (
-        <div className="status-row">
-          <span className="status-key">Weather</span>
-          <span className={`status-val ${s.weatherError && !s.weatherOk ? 'bad' : s.weatherOk ? 'ok' : ''}`}>
-            {s.weatherCondition || (s.weatherOk ? 'ok' : '—')}
-          </span>
-        </div>
+      {/* API adapter health (shown when API mode is requested) */}
+      {api && apiActive && (
+        <>
+          <div className="status-row" style={{ marginTop: 8 }}>
+            <span className="status-key">API adapter</span>
+            <span className="status-val">{api.adapter || '—'}</span>
+          </div>
+          <div className="status-row">
+            <span className="status-key">API fetched</span>
+            <span className="status-val">{timeAgo(api.lastSuccess)}</span>
+          </div>
+          <div className="status-row">
+            <span className="status-key">Data source</span>
+            <span className="status-val">{api.cached ? 'cache (stale)' : api.hasCache ? 'live cache' : 'none'}</span>
+          </div>
+          <div className="status-row">
+            <span className="status-key">Rate limit</span>
+            <span className={`status-val ${api.rateLimited ? 'bad' : 'ok'}`}>
+              {api.rateLimited ? `backoff → ${timeUntil(api.nextRetry)}` : 'ok'}
+            </span>
+          </div>
+          {api.lastError && (
+            <div className="status-row">
+              <span className="status-key">API error</span>
+              <span className="status-val bad" style={{ maxWidth: '60%', textAlign: 'right', wordBreak: 'break-word' }}>
+                {api.lastError}
+              </span>
+            </div>
+          )}
+        </>
       )}
 
-      {s.spaceError && (
-        <div className="warn">
-          ⚠ ISS live feed unavailable — showing modeled satellites only.
-          <div className="warn-detail">{s.spaceError}</div>
-        </div>
+      {/* LOCAL_ADSB health (shown when LOCAL_ADSB mode is requested) */}
+      {local && localActive && (
+        <>
+          <div className="status-row" style={{ marginTop: 8 }}>
+            <span className="status-key">ADS-B source</span>
+            <span className="status-val">{local.sourceType === 'none' ? 'not set' : local.sourceType}</span>
+          </div>
+          <div className="status-row">
+            <span className="status-key">Configured</span>
+            <span className={`status-val ${local.configured ? 'ok' : 'bad'}`}>
+              {local.configured ? 'yes' : 'no'}
+            </span>
+          </div>
+          <div className="status-row">
+            <span className="status-key">ADS-B read</span>
+            <span className="status-val">{timeAgo(local.lastSuccess)}</span>
+          </div>
+          <div className="status-row">
+            <span className="status-key">Data source</span>
+            <span className="status-val">{local.usingCache ? 'cache' : local.lastSuccess ? 'live' : 'none'}</span>
+          </div>
+          {local.lastError && (
+            <div className="status-row">
+              <span className="status-key">ADS-B error</span>
+              <span className="status-val bad" style={{ maxWidth: '60%', textAlign: 'right', wordBreak: 'break-word' }}>
+                {local.lastError}
+              </span>
+            </div>
+          )}
+        </>
       )}
-      {s.weatherError && !s.weatherOk && (
-        <div className="warn">
-          ⚠ Weather feed unavailable.
-          <div className="warn-detail">{s.weatherError}</div>
-        </div>
+
+      {/* Optional layers — only show rows for layers that are enabled */}
+      {(layers.weather || layers.satellites || layers.space) && (
+        <>
+          {layers.weather && (
+            <div className="status-row" style={{ marginTop: 8 }}>
+              <span className="status-key">Weather</span>
+              <span className={`status-val ${s.weather?.ok ? 'ok' : 'bad'}`}>
+                {s.weather?.ok ? s.weather.condition || 'ok' : s.weather?.lastError || 'loading'}
+              </span>
+            </div>
+          )}
+          {layers.satellites && (
+            <div className="status-row">
+              <span className="status-key">Satellites</span>
+              <span className={`status-val ${s.satellites?.ok ? 'ok' : 'bad'}`}>
+                {s.satellites?.ok ? `${s.satellites.count} tracked` : s.satellites?.lastError || 'loading'}
+              </span>
+            </div>
+          )}
+          {layers.space && (
+            <div className="status-row">
+              <span className="status-key">Space</span>
+              <span className={`status-val ${s.space?.ok ? 'ok' : ''}`}>
+                {s.space?.ok ? s.space.moonPhase || 'ok' : 'loading'}
+              </span>
+            </div>
+          )}
+        </>
       )}
 
       {fallback && (

@@ -6,10 +6,10 @@
 
 import React, { useEffect, useRef } from 'react';
 import { getTheme } from '../lib/themes.js';
-import { makeProjector, makeSkyProjector, projectHeading } from '../lib/projectionMath.js';
+import { makeProjector, projectHeading } from '../lib/projectionMath.js';
 import { drawAircraft } from '../lib/aircraftSymbols.js';
-import { drawSatellite, drawISS } from '../lib/spaceSymbols.js';
-import { drawWeather } from '../lib/weatherLayer.js';
+import { drawSatellite, drawWindArrow } from '../lib/layerSymbols.js';
+import { WeatherCard, SpaceCard } from './LayerCards.jsx';
 
 // Deterministic starfield so stars don't twinkle-jump on every resize.
 function makeStars(count, w, h, seed = 1234) {
@@ -26,14 +26,17 @@ function makeStars(count, w, h, seed = 1234) {
   }));
 }
 
-export default function SkyRenderer({ settings, aircraft, trails, space, weather, testPattern }) {
+export default function SkyRenderer({ settings, aircraft, trails, layerData, testPattern }) {
   const canvasRef = useRef(null);
   const wrapRef = useRef(null);
-  const stateRef = useRef({ rendered: new Map(), renderedSat: new Map(), stars: [], w: 0, h: 0 });
+  const stateRef = useRef({ rendered: new Map(), stars: [], w: 0, h: 0 });
 
   // Keep the freshest props available to the animation loop without restarting it.
-  const propsRef = useRef({ settings, aircraft, trails, space, weather, testPattern });
-  propsRef.current = { settings, aircraft, trails, space, weather, testPattern };
+  const propsRef = useRef({ settings, aircraft, trails, layerData, testPattern });
+  propsRef.current = { settings, aircraft, trails, layerData, testPattern };
+
+  const layers = settings.layers || {};
+  const ld = layerData || {};
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -78,6 +81,9 @@ export default function SkyRenderer({ settings, aircraft, trails, space, weather
   return (
     <div ref={wrapRef} className="sky-wrap">
       <canvas ref={canvasRef} />
+      {/* Subtle corner info cards for optional layers (only when enabled). */}
+      {layers.weather && ld.weather && <WeatherCard weather={ld.weather} />}
+      {layers.space && ld.space && <SpaceCard space={ld.space} />}
     </div>
   );
 }
@@ -86,7 +92,7 @@ export default function SkyRenderer({ settings, aircraft, trails, space, weather
 // Drawing
 // ---------------------------------------------------------------------------
 function draw(ctx, st, props, dt) {
-  const { settings, aircraft, trails, space, weather, testPattern } = props;
+  const { settings, aircraft, trails, layerData, testPattern } = props;
   const { w, h } = st;
   if (!w || !h) return;
 
@@ -97,9 +103,7 @@ function draw(ctx, st, props, dt) {
   const rangeNm = settings.rangeNm || 60;
   const cal = settings.calibration || {};
   const layers = settings.layers || {};
-  const showAircraft = layers.aircraft !== false;
-  const showSatellites = layers.satellites !== false;
-  const showWeather = layers.weather !== false;
+  const ld = layerData || {};
 
   // --- Background gradient ---
   const grad = ctx.createRadialGradient(center.x, center.y, 0, center.x, center.y, Math.max(w, h) * 0.7);
@@ -108,17 +112,19 @@ function draw(ctx, st, props, dt) {
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, w, h);
 
-  // --- Starfield ---
-  ctx.save();
-  ctx.globalAlpha = 0.6 * brightness;
-  for (const s of st.stars) {
-    ctx.beginPath();
-    ctx.fillStyle = theme.star;
-    ctx.globalAlpha = s.a * 0.6 * brightness;
-    ctx.arc(s.x * w, s.y * h, s.r, 0, Math.PI * 2);
-    ctx.fill();
+  // --- Starfield (optional "stars" layer; on by default) ---
+  if (layers.stars !== false) {
+    ctx.save();
+    ctx.globalAlpha = 0.6 * brightness;
+    for (const s of st.stars) {
+      ctx.beginPath();
+      ctx.fillStyle = theme.star;
+      ctx.globalAlpha = s.a * 0.6 * brightness;
+      ctx.arc(s.x * w, s.y * h, s.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
   }
-  ctx.restore();
 
   // --- Radar rings + range labels ---
   ctx.save();
@@ -172,29 +178,17 @@ function draw(ctx, st, props, dt) {
   ctx.fill();
   ctx.restore();
 
-  // --- Calibration test pattern (overrides overlays when active) ---
+  // --- Calibration test pattern (overrides aircraft when active) ---
   if (testPattern) {
     drawTestPattern(ctx, w, h, center, radiusPx, theme, brightness);
     return;
   }
 
-  const showLabels = settings.display.labels !== false;
-  const showTrails = settings.display.trails !== false;
-
-  // --- Weather overlay (drawn as a backdrop, under aircraft + satellites) ---
-  if (showWeather && weather) {
-    drawWeather(ctx, weather, { w, h, center, radiusPx }, theme, brightness, performance.now());
-  }
-
-  // --- Satellites + ISS (sky-dome projection: zenith center, horizon at rim) ---
-  if (showSatellites && space && space.length) {
-    drawSpaceLayer(ctx, st, space, { center, radiusPx, cal, theme, brightness, showLabels, dt });
-  }
-
   // --- Aircraft + trails ---
-  if (!showAircraft) return;
   const project = makeProjector({ home: settings.home, rangeNm, center, radiusPx, calibration: cal });
   const size = 14 * (settings.display.aircraftSize ?? 1);
+  const showLabels = settings.display.labels !== false;
+  const showTrails = settings.display.trails !== false;
 
   // Smoothly ease rendered lat/lon toward reported positions.
   const seen = new Set();
@@ -270,86 +264,66 @@ function draw(ctx, st, props, dt) {
     }
   }
   ctx.restore();
-}
 
-// Satellite / ISS sky-dome layer. Objects above the horizon are placed by
-// azimuth + elevation (zenith at center, horizon at the outer ring). Positions
-// are eased frame-to-frame for smooth motion, just like aircraft.
-function drawSpaceLayer(ctx, st, space, opts) {
-  const { center, radiusPx, cal, theme, brightness, showLabels, dt } = opts;
-  const projectSky = makeSkyProjector({ center, radiusPx, calibration: cal });
-  const lerpK = Math.min(1, dt * 5);
-  const pulse = (performance.now() % 2000) / 2000; // 0..1 ISS ring pulse
+  // --- Optional layers (subtle; must never overpower aircraft) -------------
 
-  // Ease az/el toward reported values (handle azimuth wrap at 360/0).
-  const seen = new Set();
-  for (const obj of space) {
-    if (!obj.visible) continue;
-    seen.add(obj.id);
-    let r = st.renderedSat.get(obj.id);
-    if (!r) {
-      r = { az: obj.azimuth, el: obj.elevation };
-      st.renderedSat.set(obj.id, r);
-    } else {
-      let dAz = obj.azimuth - r.az;
-      if (dAz > 180) dAz -= 360;
-      if (dAz < -180) dAz += 360;
-      r.az = (r.az + dAz * lerpK + 360) % 360;
-      r.el += (obj.elevation - r.el) * lerpK;
-    }
-  }
-  for (const id of [...st.renderedSat.keys()]) if (!seen.has(id)) st.renderedSat.delete(id);
-
-  ctx.save();
-  ctx.globalAlpha = brightness;
-
-  for (const obj of space) {
-    if (!obj.visible) continue;
-    const r = st.renderedSat.get(obj.id);
-    const p = projectSky(r.az, r.el);
-    const isISS = obj.type === 'station';
-
-    // ISS gets a fading az/el trail showing its arc across the sky.
-    if (isISS && obj.trail && obj.trail.length > 1) {
+  // Weather: faint cloud/haze wash + rain tint + a small wind arrow. The in-sky
+  // cards (temp/condition) are DOM overlays; this is just the ambient feel.
+  if (layers.weather && ld.weather) {
+    const wx = ld.weather;
+    const cloud = Math.max(0, Math.min(100, wx.cloudCover || 0)) / 100;
+    if (cloud > 0.05) {
       ctx.save();
-      ctx.lineWidth = 1.4;
-      for (let i = 1; i < obj.trail.length; i++) {
-        if (obj.trail[i - 1].elevation < 0 && obj.trail[i].elevation < 0) continue;
-        const a = projectSky(obj.trail[i - 1].azimuth, obj.trail[i - 1].elevation);
-        const b = projectSky(obj.trail[i].azimuth, obj.trail[i].elevation);
-        ctx.strokeStyle = theme.satTrail;
-        ctx.globalAlpha = (i / obj.trail.length) * 0.5 * brightness;
-        ctx.beginPath();
-        ctx.moveTo(a.x, a.y);
-        ctx.lineTo(b.x, b.y);
-        ctx.stroke();
-      }
+      // Cap the wash low so the display stays readable.
+      ctx.globalAlpha = cloud * 0.10 * brightness;
+      ctx.fillStyle = theme.cloud;
+      ctx.fillRect(0, 0, w, h);
       ctx.restore();
     }
-
-    const size = isISS ? 8 : 6;
-    ctx.save();
-    ctx.translate(p.x, p.y);
-    if (isISS) drawISS(ctx, size, theme.iss, theme.issGlow, pulse);
-    else drawSatellite(ctx, size, theme.satellite, theme.satelliteGlow);
-    ctx.restore();
-
-    if (showLabels) {
-      ctx.shadowBlur = 0;
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'top';
-      const lx = p.x + size + 4;
-      const ly = p.y - size;
-      ctx.font = `bold ${isISS ? 12 : 10}px ui-monospace, Menlo, Consolas, monospace`;
-      ctx.fillStyle = isISS ? theme.iss : theme.satellite;
-      ctx.globalAlpha = brightness;
-      ctx.fillText(obj.name, lx, ly);
-      ctx.font = '9px ui-monospace, Menlo, Consolas, monospace';
+    if ((wx.precipitation || 0) > 0) {
+      ctx.save();
+      ctx.globalAlpha = Math.min(0.12, 0.04 + wx.precipitation * 0.02) * brightness;
+      ctx.fillStyle = 'rgba(80, 120, 200, 1)'; // cool rain tint
+      ctx.fillRect(0, 0, w, h);
+      ctx.restore();
+    }
+    if (Number.isFinite(wx.windDirection)) {
+      drawWindArrow(ctx, 56, h - 56, wx.windDirection, theme.wind, 26);
+      ctx.save();
+      ctx.globalAlpha = 0.8 * brightness;
       ctx.fillStyle = theme.labelDim;
-      ctx.fillText(`${Math.round(obj.elevation)}° el`, lx, ly + 13);
+      ctx.font = '10px ui-monospace, Menlo, Consolas, monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(`${Math.round(wx.windSpeed || 0)}kt`, 56, h - 28);
+      ctx.restore();
     }
   }
-  ctx.restore();
+
+  // Satellites / ISS: distinct icon + glow, clearly not aircraft. Projected the
+  // same way; most pass outside radar range and are simply culled (the card
+  // still reports them). Mock provider keeps a couple near home for demos.
+  if (layers.satellites && Array.isArray(ld.satellites) && ld.satellites.length) {
+    const satSize = 9 * (settings.display.aircraftSize ?? 1);
+    ctx.save();
+    ctx.globalAlpha = brightness;
+    for (const sat of ld.satellites) {
+      const p = project(sat.lat, sat.lon);
+      if (p.x < -40 || p.x > w + 40 || p.y < -40 || p.y > h + 40) continue;
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      drawSatellite(ctx, satSize, theme.satellite, theme.satelliteGlow);
+      ctx.restore();
+      if (showLabels) {
+        ctx.shadowBlur = 0;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
+        ctx.font = 'bold 11px ui-monospace, Menlo, Consolas, monospace';
+        ctx.fillStyle = theme.satellite;
+        ctx.fillText(sat.name || sat.id, p.x + satSize, p.y - satSize * 0.6);
+      }
+    }
+    ctx.restore();
+  }
 }
 
 // Calibration test pattern: grid + center dot + outer ring + compass + corners.
