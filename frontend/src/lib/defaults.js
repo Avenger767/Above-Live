@@ -18,12 +18,13 @@ export const DEFAULT_SETTINGS = {
     nearestN: 5,
     labelRotationDeg: 0,        // rotate labels independently of the field
     highlightEmergency: true,   // subtle 7500/7600/7700 highlight
+    glyphDebug: false,          // show typeCode + glyph class under each callsign
   },
   calibration: { offsetX: 0, offsetY: 0, scale: 1, rotation: 0, flipH: false, flipV: false },
 
   // Smooth-motion model (see frontend/src/lib/aircraftMotion.js).
   motion: { interpolate: true, renderDelayMs: 1150, maxExtrapolationSec: 4, staleSec: 20 },
-  api: { baseUrl: 'https://api.airplanes.live/v2', apiKey: '', pollIntervalMs: 30000, rateLimitBackoffMs: 60000 },
+  api: { baseUrl: 'https://api.airplanes.live/v2', apiKey: '', pollIntervalMs: 60000, rateLimitBackoffMs: 120000, settingsDebounceMs: 3000 },
   localAdsb: { url: 'http://localhost:8080/data/aircraft.json', path: '', pollIntervalMs: 1000 },
 
   // Optional display layers (aircraft + stars on; the rest off by default).

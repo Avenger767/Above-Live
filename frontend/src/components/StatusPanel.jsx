@@ -4,6 +4,7 @@
 // provider failed and MOCK data is being shown instead.
 
 import React from 'react';
+import { effectiveMotionSettings, motionMode } from '../lib/aircraftMotion.js';
 
 function timeAgo(ts) {
   if (!ts) return '—';
@@ -19,7 +20,7 @@ function timeUntil(ts) {
   return s < 60 ? `${s}s` : `${Math.round(s / 60)}m`;
 }
 
-export default function StatusPanel({ status, aircraftCount, connectionMode }) {
+export default function StatusPanel({ status, aircraftCount, connectionMode, settings }) {
   const s = status || {};
   const fallback = s.usingFallback;
   const api = s.api;
@@ -27,6 +28,11 @@ export default function StatusPanel({ status, aircraftCount, connectionMode }) {
   const local = s.localAdsb;
   const localActive = (s.requestedProvider || '').toUpperCase() === 'LOCAL_ADSB';
   const layers = s.layers || {};
+
+  // Derive current motion configuration (provider-aware).
+  const effMotion = effectiveMotionSettings(settings || {}).motion || {};
+  const mode = motionMode(settings || {});
+  const modeLabel = mode === 'api' ? 'Slow API prediction' : 'Fast feed';
 
   return (
     <div className="status">
@@ -55,6 +61,20 @@ export default function StatusPanel({ status, aircraftCount, connectionMode }) {
       <div className="status-row">
         <span className="status-key">Updated</span>
         <span className="status-val">{timeAgo(s.lastUpdate)}</span>
+      </div>
+
+      {/* Motion model configuration */}
+      <div className="status-row" style={{ marginTop: 8 }}>
+        <span className="status-key">Motion mode</span>
+        <span className="status-val">{modeLabel}</span>
+      </div>
+      <div className="status-row">
+        <span className="status-key">Render delay</span>
+        <span className="status-val">{effMotion.renderDelayMs ?? 1150} ms</span>
+      </div>
+      <div className="status-row">
+        <span className="status-key">Max extrapolation</span>
+        <span className="status-val">{effMotion.maxExtrapolationSec ?? 4} s</span>
       </div>
 
       {/* API adapter health (shown when API mode is requested) */}

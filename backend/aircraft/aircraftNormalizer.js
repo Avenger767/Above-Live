@@ -78,10 +78,10 @@ export function normalizeAircraft(raw, source) {
   if (category) ac.category = category;
   if (Number.isFinite(Number(raw.rssi))) ac.rssi = Number(raw.rssi);
 
-  // ICAO type code (e.g. "B738"). dump1090 exposes it as `t`; we already map
-  // that into `aircraftType`, but pass a dedicated `typeCode` through too so the
-  // frontend glyph classifier has an unambiguous field to read.
-  const typeCode = str(raw.typeCode ?? raw.t ?? raw.type ?? raw.icaoType);
+  // ICAO type code (e.g. "B738"). dump1090 exposes it as `t`; Airplanes.live uses
+  // `type` or `desc` (description like "L2J"). Pass a dedicated `typeCode` through
+  // so the frontend glyph classifier has an unambiguous field to read.
+  const typeCode = str(raw.typeCode ?? raw.t ?? raw.type ?? raw.icaoType ?? raw.desc);
   if (typeCode && typeCode !== 'UNK') ac.typeCode = typeCode;
 
   // Registration / tail number (dump1090 `r`).

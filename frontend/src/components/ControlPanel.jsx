@@ -150,6 +150,16 @@ export default function ControlPanel({ settings, onChange, onToggleFullscreen, o
         </label>
       )}
 
+      <label className="field toggle">
+        <span>Glyph debug</span>
+        <input
+          type="checkbox"
+          checked={Boolean(d.glyphDebug)}
+          onChange={(e) => setDisplay({ glyphDebug: e.target.checked })}
+        />
+      </label>
+      <p className="field-hint">Shows type code and glyph class below each callsign.</p>
+
       <h3>Motion &amp; Performance</h3>
 
       <label className="field toggle">

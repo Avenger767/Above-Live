@@ -185,7 +185,7 @@ export default function App() {
             />
           )}
           {tab === 'status' && (
-            <StatusPanel status={status} aircraftCount={aircraft.length} connectionMode={connectionMode} />
+            <StatusPanel status={status} aircraftCount={aircraft.length} connectionMode={connectionMode} settings={settings} />
           )}
         </div>
 

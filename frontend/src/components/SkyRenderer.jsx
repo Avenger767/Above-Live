@@ -41,6 +41,7 @@ import {
   updateTrackLife,
   staleMsFromSettings,
   renderDelayMs,
+  effectiveMotionSettings,
 } from '../lib/aircraftMotion.js';
 
 const WARN_RGB = [255, 90, 71]; // emergency highlight colour
@@ -159,12 +160,12 @@ export default function SkyRenderer({ settings, aircraft, trails, layerData, tes
 // when the array reference actually changed (App passes a new array each WS
 // tick). Sampling/interpolation happens every frame regardless.
 // ---------------------------------------------------------------------------
-function ingestIfNew(st, settings, aircraft, now) {
+function ingestIfNew(st, effSettings, aircraft, now) {
   if (aircraft && aircraft !== st.lastAircraftRef) {
-    updateAircraftTracks(st.tracks, aircraft, now, settings);
+    updateAircraftTracks(st.tracks, aircraft, now, effSettings);
     st.lastAircraftRef = aircraft;
   }
-  pruneStaleTracks(st.tracks, now, staleMsFromSettings(settings));
+  pruneStaleTracks(st.tracks, now, staleMsFromSettings(effSettings));
 }
 
 // ---------------------------------------------------------------------------
@@ -190,11 +191,15 @@ function draw(ctx, st, props, dt, nowMs) {
   const layers = settings.layers || {};
   const ld = layerData || {};
 
+  // Apply provider-aware motion overrides (API feeds poll every ~60 s, so we
+  // extend extrapolation and stale windows so planes keep moving between fetches).
+  const effSettings = effectiveMotionSettings(settings);
+
   // Always keep the motion model fed + pruned, even in calibration mode, so the
   // sample aircraft in the debug overlay move smoothly too.
   const now = nowMs;
-  ingestIfNew(st, settings, aircraft, now);
-  updateTrackLife(st.tracks, now, dt, settings);
+  ingestIfNew(st, effSettings, aircraft, now);
+  updateTrackLife(st.tracks, now, dt, effSettings);
 
   // --- Background ---
   if (mc.solidBlack) {
@@ -281,7 +286,7 @@ function draw(ctx, st, props, dt, nowMs) {
   // --- Calibration test pattern / debug overlay ---
   if (testPattern || mc.isCalibration) {
     drawTestPattern(ctx, w, h, center, radiusPx, theme, brightness);
-    drawCalibrationHud(ctx, st, settings, project, center, radiusPx, theme, brightness, now);
+    drawCalibrationHud(ctx, st, settings, effSettings, project, center, radiusPx, theme, brightness, now);
     return;
   }
 
@@ -292,20 +297,20 @@ function draw(ctx, st, props, dt, nowMs) {
   const size = 14 * (settings.display.aircraftSize ?? 1);
   const showLabels = settings.display.labels !== false;
   const showTrails = settings.display.trails !== false;
-  const renderTime = now - renderDelayMs(settings);
+  const renderTime = now - renderDelayMs(effSettings);
   const headingK = Math.min(1, dt * 5); // frame-rate-aware heading ease
 
   // Build the visible set: sample each track at renderTime, project, classify,
   // colour, and fade. Cull anything off-screen.
   const visible = [];
   for (const tr of st.tracks.values()) {
-    const pos = sampleAircraftTrack(tr, renderTime, settings);
+    const pos = sampleAircraftTrack(tr, renderTime, effSettings);
     if (!pos) continue;
     const p = project(pos.lat, pos.lon);
     if (p.x < -60 || p.x > w + 60 || p.y < -60 || p.y > h + 60) continue;
 
     // Heading: derive from motion, project through calibration, then ease.
-    const geoHdg = sampleTrackHeading(tr, renderTime, settings);
+    const geoHdg = sampleTrackHeading(tr, renderTime, effSettings);
     const projHdg = projectHeading(geoHdg, cal);
     tr.renderHeading = smoothHeading(tr.renderHeading, projHdg, headingK);
 
@@ -397,13 +402,17 @@ function draw(ctx, st, props, dt, nowMs) {
 // ---------------------------------------------------------------------------
 // Labels
 // ---------------------------------------------------------------------------
-function labelLines(ac) {
+function labelLines(ac, glyphKind, glyphDebug) {
   const lines = [];
   lines.push({ text: ac.callsign || ac.id || '????', kind: 'title' });
   const fl = Math.round((ac.altitude ?? 0) / 100);
   const sub = `FL${fl}  ${ac.speed ?? 0}kt`;
   lines.push({ text: sub, kind: 'sub' });
   if (Number.isFinite(ac.distanceNm)) lines.push({ text: `${ac.distanceNm}nm`, kind: 'sub' });
+  if (glyphDebug) {
+    const tc = ac.typeCode || ac.aircraftType || '??';
+    lines.push({ text: `${tc} · ${glyphKind}`, kind: 'sub' });
+  }
   return lines;
 }
 
@@ -411,6 +420,7 @@ function drawLabels(ctx, st, settings, visible, mc, w, h, size) {
   const density = settings.display.labelDensity || 'nearestN';
   const nearestN = Number.isFinite(settings.display.nearestN) ? settings.display.nearestN : 5;
   const labRot = labelRotationRad(settings);
+  const glyphDebug = settings.display.glyphDebug === true;
 
   // Nearest first so they get priority placement and paint clearly.
   const nearestFirst = [...visible].sort((a, b) => a.dist - b.dist);
@@ -434,7 +444,7 @@ function drawLabels(ctx, st, settings, visible, mc, w, h, size) {
 
   for (let i = 0; i < Math.min(limit, nearestFirst.length); i++) {
     const v = nearestFirst[i];
-    const lines = labelLines(v.ac);
+    const lines = labelLines(v.ac, v.kind, glyphDebug);
 
     // Measure.
     let lw = 0;
@@ -657,16 +667,16 @@ function drawTestPattern(ctx, w, h, center, radiusPx, theme, brightness) {
 
 // Debug HUD: current display mode + calibration values, plus a few sample
 // aircraft glyphs so you can confirm orientation/scale before going live.
-function drawCalibrationHud(ctx, st, settings, project, center, radiusPx, theme, brightness, now) {
+function drawCalibrationHud(ctx, st, settings, effSettings, project, center, radiusPx, theme, brightness, now) {
   const cal = getCalibration(settings);
   const d = settings.display || {};
 
   // Sample aircraft: live tracks if any, otherwise four synthetic ones at the
   // cardinal mid-radius points so the overlay is useful even with no traffic.
-  const renderTime = now - renderDelayMs(settings);
+  const renderTime = now - renderDelayMs(effSettings);
   let samples = [];
   for (const tr of st.tracks.values()) {
-    const pos = sampleAircraftTrack(tr, renderTime, settings);
+    const pos = sampleAircraftTrack(tr, renderTime, effSettings);
     if (!pos) continue;
     const p = project(pos.lat, pos.lon);
     if (p.x < 0 || p.x > st.w || p.y < 0 || p.y > st.h) continue;

@@ -265,3 +265,38 @@ export function staleMsFromSettings(settings) {
 export function renderDelayMs(settings) {
   return motionCfg(settings).renderDelayMs;
 }
+
+/**
+ * Return settings with motion parameters scaled for the current provider.
+ *
+ * API feeds push data only every ~60 s. With default fast-feed values
+ * (maxExtrapolationSec: 4, staleSec: 20) aircraft freeze 4 s after each
+ * fetch and disappear before the next one arrives. This function overrides
+ * those values so aircraft keep moving across the full API poll interval.
+ *
+ * MOCK and LOCAL_ADSB push every ~1 s, so their defaults work as-is.
+ */
+export function effectiveMotionSettings(settings) {
+  if (!settings) return settings;
+  if (String(settings.provider || 'MOCK').toUpperCase() !== 'API') return settings;
+  const m = settings.motion || {};
+  return {
+    ...settings,
+    motion: {
+      ...m,
+      renderDelayMs: 5000,       // stay inside the interpolation window
+      maxExtrapolationSec: 35,   // dead-reckon most of the 60 s poll interval
+      staleSec: 65,              // survive a full cycle without an update
+    },
+  };
+}
+
+/**
+ * Returns 'api' when API mode overrides are active, 'fast' otherwise.
+ * Used by the Status panel to label the motion configuration.
+ */
+export function motionMode(settings) {
+  return String((settings && settings.provider) || 'MOCK').toUpperCase() === 'API'
+    ? 'api'
+    : 'fast';
+}

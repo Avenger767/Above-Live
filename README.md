@@ -78,6 +78,10 @@ npm run dev
 Vite prints a local URL (default **http://localhost:5173**). The frontend proxies `/api` and
 `/ws` to the backend automatically, so you don't need to configure anything.
 
+> **Important — Vite port:** If something is already running on port 5173, Vite automatically
+> bumps to **5174** (then 5175, etc.). Always check the URL Vite prints in the terminal. The
+> backend is always on **4000**; only the frontend port can change.
+
 > **One-command option:** from the project root run `./scripts/start-dev.sh` to start both at once.
 
 ---
@@ -119,6 +123,28 @@ see it (the fleet updates ~once per second, just like a real feed). Step by step
 `Max FPS` (default **30**, a safe Raspberry Pi 4 value; `Uncapped` uses the display refresh rate),
 altitude colour, emergency highlight, and label density / Nearest-N all live in the **Display**
 panel too.
+
+### Testing API smooth motion (internet flight data)
+
+API mode polls Airplanes.live every **60 seconds** — far too slow for per-second interpolation.
+Above Live detects the API provider and automatically switches to a slow-feed motion model:
+render delay 5 s, dead-reckoning up to 35 s, stale window 65 s. Aircraft move continuously
+between fetches using heading + speed rather than jumping every 60 s then freezing.
+
+To test it:
+
+1. Switch **Provider → API** in the Display panel.
+2. Open the **Status** tab. Confirm **Motion mode: Slow API prediction** appears.
+3. Watch **Render delay: 5000 ms** and **Max extrapolation: 35 s** — these confirm the model is
+   in API mode.
+4. Also check **Data source** — it should show `live` once the first fetch succeeds (≤60 s).
+5. Aircraft should glide continuously across the radar — no teleporting, no 4-second freeze.
+6. Turn on **Labels → Glyph debug** (Display panel) to see each aircraft's ICAO type code and the
+   glyph class it resolved to (e.g. `B738 · airliner`). Useful for confirming classification.
+7. Switch back to **MOCK** — **Motion mode** returns to **Fast feed** and render delay drops to
+   1150 ms (visible in the Status tab).
+8. Note: **Status → Motion mode** always reflects the current effective configuration, so you can
+   confirm which mode is active without diving into settings files.
 
 ---
 

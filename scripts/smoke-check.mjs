@@ -424,6 +424,7 @@ async function migrationTests() {
   check(m.display.nearestN === DEFAULT_SETTINGS.display.nearestN, 'migration: display.nearestN backfilled');
   check(m.display.labelRotationDeg === DEFAULT_SETTINGS.display.labelRotationDeg, 'migration: display.labelRotationDeg backfilled');
   check(m.display.highlightEmergency === DEFAULT_SETTINGS.display.highlightEmergency, 'migration: display.highlightEmergency backfilled');
+  check(m.display.glyphDebug === false, 'migration: display.glyphDebug backfilled');
 
   // The whole motion{} block (absent in the old file) comes from defaults.
   check(m.motion && m.motion.interpolate === true, 'migration: motion.interpolate backfilled');

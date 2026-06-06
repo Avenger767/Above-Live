@@ -31,6 +31,8 @@ export const DEFAULT_SETTINGS = {
     labelRotationDeg: 0,
     // Subtle warning highlight for emergency squawks (7500/7600/7700).
     highlightEmergency: true,
+    // Show typeCode + glyph class under each callsign (developer/debug aid).
+    glyphDebug: false,
   },
   calibration: { offsetX: 0, offsetY: 0, scale: 1, rotation: 0, flipH: false, flipV: false },
 
