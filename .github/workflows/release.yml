@@ -1,0 +1,66 @@
+name: Build & Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build frontend
+        run: |
+          cd frontend
+          npm install
+          npm run build
+
+      - name: Package release
+        run: |
+          mkdir -p above-live/frontend above-live/backend above-live/scripts
+          cp -r frontend/dist above-live/frontend/
+          cp -r backend/* above-live/backend/
+          cp -r scripts/* above-live/scripts/
+          cp README.md above-live/
+          cat > above-live/start.sh << 'EOF'
+          #!/bin/bash
+          # Start Above Live backend (serves built frontend)
+          cd "$(dirname "$0")/backend"
+          npm install --omit=dev
+          node server.js
+          EOF
+          chmod +x above-live/start.sh
+          zip -r above-live-${{ github.event.inputs.version }}.zip above-live/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.version }}
+          name: Above Live ${{ github.event.inputs.version }}
+          body: |
+            ## Above Live ${{ github.event.inputs.version }}
+
+            ### Installation
+            1. Download and unzip `above-live-${{ github.event.inputs.version }}.zip`
+            2. Run `./start.sh` (Linux/macOS) to start the backend server
+            3. Open your browser to `http://localhost:3000`
+
+            ### Requirements
+            - Node.js 18+
+          files: above-live-${{ github.event.inputs.version }}.zip
+          draft: false
+          prerelease: false
