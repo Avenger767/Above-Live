@@ -84,10 +84,10 @@ export function getModeConfig(mode, brightness = 1, brightnessMap = {}) {
         aircraft:         B * 0.5,
         labels:           B * 0.4,
         trails:           B * 0.3,
-        satellites:       B * 0.9,
-        iss:              B * 0.9,
-        starlink:         B * 0.5,
-        planets:          B * 0.85,
+        satellites:       Math.min(1, B * 1.0), // space objects more prominent in ambient
+        iss:              Math.min(1, B * 1.0),
+        starlink:         B * 0.55,
+        planets:          Math.min(1, B * 1.0),
         weatherCanvas:    B * 0.8,
       };
 
@@ -106,10 +106,10 @@ export function getModeConfig(mode, brightness = 1, brightnessMap = {}) {
         aircraft:         B,
         labels:           B,
         trails:           B,
-        satellites:       B,
-        iss:              B,
-        starlink:         B * 0.6,
-        planets:          B,
+        satellites:       0,    // hide optional space objects in calibration mode
+        iss:              0,
+        starlink:         0,
+        planets:          0,
         weatherCanvas:    0,
       };
 

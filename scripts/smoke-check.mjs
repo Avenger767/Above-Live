@@ -449,6 +449,7 @@ async function migrationTests() {
   check(m.display.labelRotationDeg === DEFAULT_SETTINGS.display.labelRotationDeg, 'migration: display.labelRotationDeg backfilled');
   check(m.display.highlightEmergency === DEFAULT_SETTINGS.display.highlightEmergency, 'migration: display.highlightEmergency backfilled');
   check(m.display.glyphDebug === false, 'migration: display.glyphDebug backfilled');
+  check(m.display.spaceLabels === DEFAULT_SETTINGS.display.spaceLabels, 'migration: display.spaceLabels backfilled');
 
   // The whole motion{} block (absent in the old file) comes from defaults.
   check(m.motion && m.motion.interpolate === true, 'migration: motion.interpolate backfilled');
@@ -721,6 +722,52 @@ async function spaceLayerTests() {
 }
 
 // ---------------------------------------------------------------------------
+// Part I — Starlink 403 isolation (mocked fetch, no network)
+// ---------------------------------------------------------------------------
+async function starlinkBlockedTests() {
+  console.log('\nPart I — Starlink HTTP 403 isolation (mocked fetch)');
+  const savedFetch = global.fetch;
+
+  global.fetch = async (url) => {
+    if (String(url).includes('starlink')) {
+      // CelesTrak returns 403 for Starlink
+      return { ok: false, status: 403, text: async () => '' };
+    }
+    // Other groups: 404 (generic transient error, not blocked)
+    return { ok: false, status: 404, text: async () => '' };
+  };
+
+  try {
+    const { createOrbitalLayer: makeOrbital } = await import('../backend/layers/orbitalLayer.js');
+    const starlink = makeOrbital('starlink');
+    const iss     = makeOrbital('iss');
+    const home    = { lat: 32.7767, lon: -96.797 };
+    const s       = { home, layers: { starlink: true, iss: true } };
+
+    // Trigger TLE fetch for Starlink → should receive 403
+    await starlink.refresh(s);
+    const slMeta = starlink.getMeta(s);
+    check(slMeta.blocked === true, 'Starlink 403: blocked=true in getMeta after HTTP 403');
+    check(
+      slMeta.lastError && slMeta.lastError.includes('403'),
+      `Starlink 403: lastError mentions 403 (got: "${slMeta.lastError}")`
+    );
+    check(starlink.getData().length === 0, 'Starlink 403: getData() empty (no propagation without TLEs)');
+
+    // ISS uses a separate instance and a different group → 404, not blocked
+    await iss.refresh(s);
+    const issMeta = iss.getMeta(s);
+    check(issMeta.blocked !== true, 'Starlink 403: ISS layer NOT blocked by Starlink 403');
+
+    // After invalidate(), blocked flag resets and the layer can retry
+    starlink.invalidate();
+    check(starlink.getMeta(s).blocked !== true, 'Starlink 403: blocked resets after invalidate()');
+  } finally {
+    global.fetch = savedFetch;
+  }
+}
+
+// ---------------------------------------------------------------------------
 console.log(`Above Live — smoke check (port ${PORT})`);
 await integrationTests();
 await unitTests();
@@ -730,5 +777,6 @@ await migrationTests();
 await invalidationRelevanceTests();
 await localAdsbFormatTests();
 await spaceLayerTests();
+await starlinkBlockedTests();
 console.log(failed ? '\nSMOKE CHECK FAILED' : '\nSMOKE CHECK PASSED');
 process.exit(failed ? 1 : 0);

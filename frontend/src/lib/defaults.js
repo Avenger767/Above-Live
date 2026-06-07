@@ -19,6 +19,7 @@ export const DEFAULT_SETTINGS = {
     labelRotationDeg: 0,        // rotate labels independently of the field
     highlightEmergency: true,   // subtle 7500/7600/7700 highlight
     glyphDebug: false,          // show typeCode + glyph class under each callsign
+    spaceLabels: 'major',       // 'off' | 'major' (Sun/Moon/ISS) | 'all'
   },
   calibration: { offsetX: 0, offsetY: 0, scale: 1, rotation: 0, flipH: false, flipV: false },
 

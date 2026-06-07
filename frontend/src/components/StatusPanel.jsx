@@ -27,29 +27,42 @@ function OrbitalRow({ label, meta }) {
   const tleAge = m.tleAgeSeconds != null
     ? (m.tleAgeSeconds < 3600 ? `${Math.round(m.tleAgeSeconds / 60)}m` : `${Math.round(m.tleAgeSeconds / 3600)}h`)
     : '—';
+  const statusText = m.blocked
+    ? 'unavailable'
+    : m.ok ? `${m.count}/${m.cap} shown`
+    : m.lastError ? 'error'
+    : 'loading';
+  const statusClass = m.blocked || (!m.ok && m.lastError) ? 'bad' : m.ok ? 'ok' : '';
   return (
     <>
       <div className="status-row" style={{ marginTop: 8 }}>
         <span className="status-key">{label}</span>
-        <span className={`status-val ${m.ok ? 'ok' : m.lastError ? 'bad' : ''}`}>
-          {m.ok ? `${m.count}/${m.cap} shown` : m.lastError ? 'error' : 'loading'}
-        </span>
+        <span className={`status-val ${statusClass}`}>{statusText}</span>
       </div>
-      <div className="status-row">
-        <span className="status-key">{label} TLE</span>
-        <span className="status-val">{m.tleCount ?? 0} cached · {tleAge} old</span>
-      </div>
-      <div className="status-row">
-        <span className="status-key">{label} updated</span>
-        <span className="status-val">{timeAgo(m.lastSuccess)}</span>
-      </div>
-      {m.lastError && (
+      {m.blocked ? (
         <div className="status-row">
-          <span className="status-key">{label} error</span>
-          <span className="status-val bad" style={{ maxWidth: '60%', textAlign: 'right', wordBreak: 'break-word' }}>
-            {m.lastError}
-          </span>
+          <span className="status-key">{label} reason</span>
+          <span className="status-val bad">blocked by source (HTTP 403)</span>
         </div>
+      ) : (
+        <>
+          <div className="status-row">
+            <span className="status-key">{label} TLE</span>
+            <span className="status-val">{m.tleCount ?? 0} cached · {tleAge} old</span>
+          </div>
+          <div className="status-row">
+            <span className="status-key">{label} updated</span>
+            <span className="status-val">{timeAgo(m.lastSuccess)}</span>
+          </div>
+          {m.lastError && (
+            <div className="status-row">
+              <span className="status-key">{label} error</span>
+              <span className="status-val bad" style={{ maxWidth: '60%', textAlign: 'right', wordBreak: 'break-word' }}>
+                {m.lastError}
+              </span>
+            </div>
+          )}
+        </>
       )}
     </>
   );

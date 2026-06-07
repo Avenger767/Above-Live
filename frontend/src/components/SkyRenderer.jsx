@@ -36,7 +36,7 @@ import {
   drawWindArrow,
   drawIss,
   drawStarlinkDot,
-  drawCelestial,
+  drawSpaceBody,
   CELESTIAL_COLORS,
 } from '../lib/layerSymbols.js';
 import { WeatherCard, SpaceCard } from './LayerCards.jsx';
@@ -309,137 +309,138 @@ function draw(ctx, st, props, dt, nowMs) {
   const renderTime = now - renderDelayMs(effSettings);
   const headingK = Math.min(1, dt * 5); // frame-rate-aware heading ease
 
-  // Build the visible set: sample each track at renderTime, project, classify,
-  // colour, and fade. Cull anything off-screen.
+  // Build the visible set (skipped entirely when aircraft layer is off).
   const visible = [];
-  for (const tr of st.tracks.values()) {
-    const pos = sampleAircraftTrack(tr, renderTime, effSettings);
-    if (!pos) continue;
-    const p = project(pos.lat, pos.lon);
-    if (p.x < -60 || p.x > w + 60 || p.y < -60 || p.y > h + 60) continue;
+  if (layers.aircraft !== false) {
+    for (const tr of st.tracks.values()) {
+      const pos = sampleAircraftTrack(tr, renderTime, effSettings);
+      if (!pos) continue;
+      const p = project(pos.lat, pos.lon);
+      if (p.x < -60 || p.x > w + 60 || p.y < -60 || p.y > h + 60) continue;
 
-    // Heading: derive from motion, project through calibration, then ease.
-    const geoHdg = sampleTrackHeading(tr, renderTime, effSettings);
-    const projHdg = projectHeading(geoHdg, cal);
-    tr.renderHeading = smoothHeading(tr.renderHeading, projHdg, headingK);
+      // Heading: derive from motion, project through calibration, then ease.
+      const geoHdg = sampleTrackHeading(tr, renderTime, effSettings);
+      const projHdg = projectHeading(geoHdg, cal);
+      tr.renderHeading = smoothHeading(tr.renderHeading, projHdg, headingK);
 
-    const ac = tr.ac;
-    const alt = ac.altitude ?? 0;
-    const emergency = highlightEmergency && isEmergencySquawk(ac.squawk);
-    const color = emergency ? WARN_RGB : altColorOn ? altitudeRamp(alt) : baseRgb;
-    const dist = Number.isFinite(ac.distanceNm)
-      ? ac.distanceNm
-      : Math.hypot(p.x - center.x, p.y - center.y); // pixel fallback for sorting
+      const ac = tr.ac;
+      const alt = ac.altitude ?? 0;
+      const emergency = highlightEmergency && isEmergencySquawk(ac.squawk);
+      const color = emergency ? WARN_RGB : altColorOn ? altitudeRamp(alt) : baseRgb;
+      const dist = Number.isFinite(ac.distanceNm)
+        ? ac.distanceNm
+        : Math.hypot(p.x - center.x, p.y - center.y); // pixel fallback for sorting
 
-    // Glyph classification is stable for an aircraft — recompute only when the
-    // identifying metadata changes, not every frame (Pi-friendly).
-    const classKey = `${ac.typeCode || ac.aircraftType || ''}|${ac.category || ''}`;
-    if (tr.kindKey !== classKey) {
-      tr.kind = classifyAircraftGlyph(ac);
-      tr.kindKey = classKey;
+      // Glyph classification is stable for an aircraft — recompute only when the
+      // identifying metadata changes, not every frame (Pi-friendly).
+      const classKey = `${ac.typeCode || ac.aircraftType || ''}|${ac.category || ''}`;
+      if (tr.kindKey !== classKey) {
+        tr.kind = classifyAircraftGlyph(ac);
+        tr.kindKey = classKey;
+      }
+
+      visible.push({
+        tr, ac, p, pos,
+        heading: tr.renderHeading,
+        geoHdg,
+        kind: tr.kind,
+        color,
+        emergency,
+        alpha: Math.max(0, Math.min(1, tr.life)),
+        dist,
+      });
     }
 
-    visible.push({
-      tr, ac, p, pos,
-      heading: tr.renderHeading,
-      geoHdg,
-      kind: tr.kind,
-      color,
-      emergency,
-      alpha: Math.max(0, Math.min(1, tr.life)),
-      dist,
-    });
+    // Trails first (under glyphs), built from each track's real history so the
+    // tail lines up exactly with the interpolated head. Tapered + fading. On slow
+    // (API) feeds there are often only 1–2 real fixes inside the window, so we
+    // fall back to a short PREDICTED trail behind the aircraft, dead-reckoned from
+    // its heading + speed, so the comet tail never vanishes between fetches.
+    if (showTrails) {
+      const trailWindowMs = Math.max(5, Math.min(60, settings.trailLength || 30)) * 1000;
+      const MAX_TRAIL_SEGMENTS = 24; // cap work per aircraft (Pi-friendly)
+      ctx.save();
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      for (const v of visible) {
+        const hist = v.tr.history || [];
+        // Real history points inside the trail window.
+        let pts = [];
+        for (const sfix of hist) {
+          if (sfix.t < renderTime - trailWindowMs || sfix.t > renderTime) continue;
+          pts.push({ p: project(sfix.lat, sfix.lon), age: (renderTime - sfix.t) / trailWindowMs });
+        }
+
+        // Sparse history (slow feed): synthesize a predicted tail behind the head
+        // by dead-reckoning backwards along the current track at ground speed.
+        if (pts.length < 2) {
+          const spd = v.ac.speed;
+          if (Number.isFinite(spd) && spd > 0 && Number.isFinite(v.geoHdg)) {
+            pts = [];
+            const STEPS = 6;
+            const spanSec = trailWindowMs / 1000;
+            for (let k = STEPS; k >= 1; k--) {
+              const back = (spanSec * k) / STEPS;            // seconds behind the head
+              const bp = deadReckonBack(v.pos, v.geoHdg, spd, back);
+              pts.push({ p: project(bp.lat, bp.lon), age: (back * 1000) / trailWindowMs });
+            }
+          }
+        }
+
+        pts.push({ p: v.p, age: 0 }); // head = interpolated/extrapolated position
+        if (pts.length < 2) continue;
+        if (pts.length > MAX_TRAIL_SEGMENTS + 1) pts = pts.slice(-(MAX_TRAIL_SEGMENTS + 1));
+
+        for (let i = 1; i < pts.length; i++) {
+          const a = pts[i - 1];
+          const b = pts[i];
+          const f = 1 - Math.min(1, b.age); // 1 at head, 0 at tail
+          ctx.strokeStyle = rgba(v.color, 0.5 * f * v.alpha * mc.trails);
+          ctx.lineWidth = 0.7 + 2.0 * f * (size / 14);
+          ctx.beginPath();
+          ctx.moveTo(a.p.x, a.p.y);
+          ctx.lineTo(b.p.x, b.p.y);
+          ctx.stroke();
+        }
+      }
+      ctx.restore();
+    }
+
+    // Glyphs (nearest painted last → on top).
+    const farthestFirst = [...visible].sort((a, b) => b.dist - a.dist);
+    for (const v of farthestFirst) {
+      const s = size * (GLYPH_SCALE[v.kind] || 1);
+      ctx.save();
+      ctx.globalAlpha = mc.aircraft * v.alpha;
+      ctx.translate(v.p.x, v.p.y);
+      ctx.rotate((v.heading * Math.PI) / 180);
+      if (v.emergency) {
+        // Subtle warning ring behind the glyph (gentle pulse).
+        const pulse = 0.35 + 0.25 * (0.5 + 0.5 * Math.sin(st.frameT * 4));
+        ctx.save();
+        ctx.rotate((-v.heading * Math.PI) / 180); // ring stays upright
+        ctx.strokeStyle = rgba(WARN_RGB, pulse * v.alpha);
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(0, 0, s * 1.5, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+      drawAircraftShape(ctx, v.kind, s, v.color, v.alpha, st.frameT, glyphSeed(v.ac.id));
+      ctx.restore();
+    }
+
+    // Labels (density + collision avoidance + optional rotation).
+    if (showLabels) {
+      drawLabels(ctx, st, settings, visible, mc, w, h, size);
+    }
   }
 
   // Report render stats up to the Status panel (throttled to ~1 Hz so it never
-  // adds per-frame React churn on a Pi).
+  // adds per-frame React churn on a Pi). Reports zero when aircraft layer is off.
   if (props.onStats && (!st.lastStatsAt || nowMs - st.lastStatsAt > 1000)) {
     st.lastStatsAt = nowMs;
     props.onStats({ trackCount: st.tracks.size, renderedCount: visible.length });
-  }
-
-  // Trails first (under glyphs), built from each track's real history so the
-  // tail lines up exactly with the interpolated head. Tapered + fading. On slow
-  // (API) feeds there are often only 1–2 real fixes inside the window, so we
-  // fall back to a short PREDICTED trail behind the aircraft, dead-reckoned from
-  // its heading + speed, so the comet tail never vanishes between fetches.
-  if (showTrails) {
-    const trailWindowMs = Math.max(5, Math.min(60, settings.trailLength || 30)) * 1000;
-    const MAX_TRAIL_SEGMENTS = 24; // cap work per aircraft (Pi-friendly)
-    ctx.save();
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    for (const v of visible) {
-      const hist = v.tr.history || [];
-      // Real history points inside the trail window.
-      let pts = [];
-      for (const sfix of hist) {
-        if (sfix.t < renderTime - trailWindowMs || sfix.t > renderTime) continue;
-        pts.push({ p: project(sfix.lat, sfix.lon), age: (renderTime - sfix.t) / trailWindowMs });
-      }
-
-      // Sparse history (slow feed): synthesize a predicted tail behind the head
-      // by dead-reckoning backwards along the current track at ground speed.
-      if (pts.length < 2) {
-        const spd = v.ac.speed;
-        if (Number.isFinite(spd) && spd > 0 && Number.isFinite(v.geoHdg)) {
-          pts = [];
-          const STEPS = 6;
-          const spanSec = trailWindowMs / 1000;
-          for (let k = STEPS; k >= 1; k--) {
-            const back = (spanSec * k) / STEPS;            // seconds behind the head
-            const bp = deadReckonBack(v.pos, v.geoHdg, spd, back);
-            pts.push({ p: project(bp.lat, bp.lon), age: (back * 1000) / trailWindowMs });
-          }
-        }
-      }
-
-      pts.push({ p: v.p, age: 0 }); // head = interpolated/extrapolated position
-      if (pts.length < 2) continue;
-      if (pts.length > MAX_TRAIL_SEGMENTS + 1) pts = pts.slice(-(MAX_TRAIL_SEGMENTS + 1));
-
-      for (let i = 1; i < pts.length; i++) {
-        const a = pts[i - 1];
-        const b = pts[i];
-        const f = 1 - Math.min(1, b.age); // 1 at head, 0 at tail
-        ctx.strokeStyle = rgba(v.color, 0.5 * f * v.alpha * mc.trails);
-        ctx.lineWidth = 0.7 + 2.0 * f * (size / 14);
-        ctx.beginPath();
-        ctx.moveTo(a.p.x, a.p.y);
-        ctx.lineTo(b.p.x, b.p.y);
-        ctx.stroke();
-      }
-    }
-    ctx.restore();
-  }
-
-  // Glyphs (nearest painted last → on top).
-  const farthestFirst = [...visible].sort((a, b) => b.dist - a.dist);
-  for (const v of farthestFirst) {
-    const s = size * (GLYPH_SCALE[v.kind] || 1);
-    ctx.save();
-    ctx.globalAlpha = mc.aircraft * v.alpha;
-    ctx.translate(v.p.x, v.p.y);
-    ctx.rotate((v.heading * Math.PI) / 180);
-    if (v.emergency) {
-      // Subtle warning ring behind the glyph (gentle pulse).
-      const pulse = 0.35 + 0.25 * (0.5 + 0.5 * Math.sin(st.frameT * 4));
-      ctx.save();
-      ctx.rotate((-v.heading * Math.PI) / 180); // ring stays upright
-      ctx.strokeStyle = rgba(WARN_RGB, pulse * v.alpha);
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.arc(0, 0, s * 1.5, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.restore();
-    }
-    drawAircraftShape(ctx, v.kind, s, v.color, v.alpha, st.frameT, glyphSeed(v.ac.id));
-    ctx.restore();
-  }
-
-  // Labels (density + collision avoidance + optional rotation).
-  if (showLabels) {
-    drawLabels(ctx, st, settings, visible, mc, w, h, size);
   }
 
   // --- Optional layers (weather wash + wind, orbital objects, celestial) ---
@@ -585,6 +586,7 @@ function getThemeLabelColor(settings) {
 function drawOptionalLayers(ctx, settings, mc, ld, theme, project, w, h, size, geom) {
   const layers = settings.layers || {};
   const showLabels = settings.display.labels !== false;
+  const spaceLabels = settings.display.spaceLabels ?? 'major';
 
   // Weather: faint canvas wash + wind arrow. No overlay in projector mode.
   if (!mc.noCanvasOverlays && layers.weather && ld.weather) {
@@ -628,16 +630,19 @@ function drawOptionalLayers(ctx, settings, mc, ld, theme, project, w, h, size, g
       if (!(body.el > 0)) continue; // below horizon
       const p = projectSky(body.az, body.el);
       const color = CELESTIAL_COLORS[body.name] || '#dfe6f0';
-      drawCelestial(ctx, p.x, p.y, body.kind, color, mc.planets);
-      if (showLabels && body.kind !== 'sun') {
+      drawSpaceBody(ctx, p.x, p.y, body.name, body.kind, color, mc.planets);
+      // 'major' shows Sun + Moon labels; 'all' shows every body.
+      const isMajorBody = body.kind === 'sun' || body.kind === 'moon';
+      const showThisLabel = spaceLabels === 'all' || (spaceLabels === 'major' && isMajorBody);
+      if (showThisLabel) {
         ctx.save();
-        ctx.globalAlpha = mc.planets * 0.9;
+        ctx.globalAlpha = mc.planets * 0.8;
         ctx.shadowBlur = 0;
         ctx.textAlign = 'left';
         ctx.textBaseline = 'top';
-        ctx.font = `${mc.labelDimSize}px ui-monospace, Menlo, Consolas, monospace`;
+        ctx.font = `${Math.max(9, mc.labelDimSize - 1)}px ui-monospace, Menlo, Consolas, monospace`;
         ctx.fillStyle = color;
-        ctx.fillText(body.name, p.x + 8, p.y - 6);
+        ctx.fillText(body.name.toUpperCase(), p.x + 10, p.y - 7);
         ctx.restore();
       }
     }
@@ -666,13 +671,13 @@ function drawOptionalLayers(ctx, settings, mc, ld, theme, project, w, h, size, g
       ctx.translate(p.x, p.y);
       drawSatellite(ctx, satSize, theme.satellite, theme.satelliteGlow);
       ctx.restore();
-      if (showLabels) {
+      if (spaceLabels === 'all') {
         ctx.save();
-        ctx.globalAlpha = mc.satellites * 0.85;
+        ctx.globalAlpha = mc.satellites * 0.8;
         ctx.shadowBlur = 0;
         ctx.textAlign = 'left';
         ctx.textBaseline = 'top';
-        ctx.font = `${mc.labelDimSize}px ui-monospace, Menlo, Consolas, monospace`;
+        ctx.font = `${Math.max(9, mc.labelDimSize - 1)}px ui-monospace, Menlo, Consolas, monospace`;
         ctx.fillStyle = theme.satellite;
         ctx.fillText(sat.name || sat.id, p.x + satSize, p.y - satSize * 0.6);
         ctx.restore();
@@ -680,7 +685,7 @@ function drawOptionalLayers(ctx, settings, mc, ld, theme, project, w, h, size, g
     }
   }
 
-  // --- ISS (distinct, brighter, always labeled) ---
+  // --- ISS (distinct, brighter, labeled in 'major' and 'all') ---
   if (layers.iss && Array.isArray(ld.iss) && ld.iss.length) {
     const issSize = 11 * acScale;
     for (const sat of ld.iss) {
@@ -691,9 +696,9 @@ function drawOptionalLayers(ctx, settings, mc, ld, theme, project, w, h, size, g
       ctx.translate(p.x, p.y);
       drawIss(ctx, issSize, theme.satellite, theme.satelliteGlow);
       ctx.restore();
-      if (showLabels) {
+      if (spaceLabels !== 'off') {
         ctx.save();
-        ctx.globalAlpha = mc.iss;
+        ctx.globalAlpha = mc.iss * 0.95;
         ctx.shadowBlur = 0;
         ctx.textAlign = 'left';
         ctx.textBaseline = 'top';

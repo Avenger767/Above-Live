@@ -36,6 +36,7 @@ export function createOrbitalLayer(key) {
   let lastError = null;     // last error message (fetch or parse)
   let backoffUntil = 0;     // don't re-attempt TLE download before this
   let lastPropagateAt = 0;
+  let blocked = false;      // true when CelesTrak returned HTTP 403 (permanent block)
 
   // ── settings helpers ───────────────────────────────────────────────────────
   const cfg = (s) => (s && s[key]) || {};
@@ -55,6 +56,11 @@ export function createOrbitalLayer(key) {
       headers: { Accept: 'text/plain' },
       signal: AbortSignal.timeout(10000),
     });
+    if (res.status === 403) {
+      const err = new Error('Blocked by source (HTTP 403)');
+      err.blocked = true;
+      throw err;
+    }
     if (res.status === 429) {
       const err = new Error('HTTP 429 (CelesTrak rate limited)');
       err.rateLimited = true;
@@ -78,12 +84,22 @@ export function createOrbitalLayer(key) {
       tleCount = elements.length;
       lastError = null;
       backoffUntil = 0;
+      blocked = false;
       console.log(`[${key}] TLE refreshed — ${tleCount} objects (group ${group(s)})`);
     } catch (err) {
       lastError = err.message;
-      // Back off longer on rate-limit; otherwise retry on the next cadence-ish.
-      backoffUntil = Date.now() + (err.rateLimited ? 30 * 60_000 : 5 * 60_000);
-      console.warn(`[${key}] TLE fetch failed: ${err.message} (keeping cached elements)`);
+      if (err.blocked) {
+        // HTTP 403: source has permanently blocked this group; back off 24 h.
+        blocked = true;
+        backoffUntil = Date.now() + 24 * 3600_000;
+        console.warn(`[${key}] TLE source blocked (HTTP 403) — retrying in 24 h`);
+      } else if (err.rateLimited) {
+        backoffUntil = Date.now() + 30 * 60_000;
+        console.warn(`[${key}] TLE fetch rate-limited: ${err.message} (keeping cached elements)`);
+      } else {
+        backoffUntil = Date.now() + 5 * 60_000;
+        console.warn(`[${key}] TLE fetch failed: ${err.message} (keeping cached elements)`);
+      }
     }
   }
 
@@ -133,6 +149,7 @@ export function createOrbitalLayer(key) {
       lastSuccess: lastSuccess || null,    // last propagate
       lastTleFetch: tleFetchedAt || null,
       lastError,
+      blocked,                             // true when HTTP 403 received
       pollIntervalMs: pollIntervalMs(s),
     };
   }
@@ -145,6 +162,7 @@ export function createOrbitalLayer(key) {
     cache = [];
     backoffUntil = 0;
     lastPropagateAt = 0;
+    blocked = false;
   }
 
   // Manual one-shot test for /api/provider-test-style debugging.

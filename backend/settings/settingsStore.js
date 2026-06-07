@@ -33,6 +33,8 @@ export const DEFAULT_SETTINGS = {
     highlightEmergency: true,
     // Show typeCode + glyph class under each callsign (developer/debug aid).
     glyphDebug: false,
+    // Space object label visibility: 'off' | 'major' (Sun/Moon/ISS) | 'all'
+    spaceLabels: 'major',
   },
   calibration: { offsetX: 0, offsetY: 0, scale: 1, rotation: 0, flipH: false, flipV: false },
 

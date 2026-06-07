@@ -162,6 +162,18 @@ export default function ControlPanel({ settings, onChange, onToggleFullscreen, o
       </label>
       <p className="field-hint">Shows type code and glyph class below each callsign.</p>
 
+      <label className="field">
+        <span>Space labels</span>
+        <select
+          value={d.spaceLabels || 'major'}
+          onChange={(e) => setDisplay({ spaceLabels: e.target.value })}
+        >
+          <option value="off">Off</option>
+          <option value="major">Major (Sun, Moon, ISS)</option>
+          <option value="all">All objects</option>
+        </select>
+      </label>
+
       <h3>Motion &amp; Performance</h3>
 
       <label className="field toggle">
@@ -210,7 +222,11 @@ export default function ControlPanel({ settings, onChange, onToggleFullscreen, o
 
       <label className="field toggle">
         <span>Aircraft</span>
-        <input type="checkbox" checked readOnly title="Aircraft is the primary layer" />
+        <input
+          type="checkbox"
+          checked={Boolean(layers.aircraft !== false)}
+          onChange={(e) => setLayer('aircraft', e.target.checked)}
+        />
       </label>
       {LAYER_TOGGLES.map((l) => (
         <label className="field toggle" key={l.key}>
