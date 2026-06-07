@@ -536,6 +536,100 @@ async function invalidationRelevanceTests() {
 }
 
 // ---------------------------------------------------------------------------
+// Part G — LOCAL_ADSB format variations (older Windows dump1090 + readsb)
+// ---------------------------------------------------------------------------
+async function localAdsbFormatTests() {
+  console.log('\nPart G — LOCAL_ADSB format parsing (no network)');
+  const { createLocalAdsbProvider } = await import('../backend/aircraft/providers/localAdsbProvider.js');
+  const home = { name: 'Test', lat: 32.7767, lon: -96.797 };
+  const settings = (path) => ({ home, localAdsb: { url: '', path } });
+
+  // --- Format A: root-level array (older Windows dump1090 data.json) ---
+  const arrayFixture = join(BACKEND, 'test', 'fixtures', 'aircraft.dump1090-array.json');
+  {
+    const p = createLocalAdsbProvider();
+    const r = await p.test(settings(arrayFixture));
+    check(r.success === true, 'dump1090-array: test succeeds');
+    check(r.detectedFormat === 'dump1090-array', `dump1090-array: format detected (got ${r.detectedFormat})`);
+    // 4 records, 1 has no lat/lon (NOPOS2) → 3 with position
+    check(r.rawCount === 4, `dump1090-array: rawCount 4 (got ${r.rawCount})`);
+    check(r.normalizedCount === 3, `dump1090-array: normalizedCount 3 (got ${r.normalizedCount})`);
+  }
+
+  // --- Field mapping for dump1090-array ---
+  {
+    const p = createLocalAdsbProvider();
+    const r = await p.test(settings(arrayFixture));
+    const ac = r.sampleNormalized.find((a) => a.id === 'ac6204');
+    check(ac != null, 'dump1090-array: hex → id (found ac6204)');
+    check(ac && ac.callsign === 'SWA55', `dump1090-array: flight → callsign trimmed (got ${ac?.callsign})`);
+    check(ac && ac.altitude === 15075, `dump1090-array: altitude numeric (got ${ac?.altitude})`);
+    check(ac && ac.heading === 206, `dump1090-array: track → heading (got ${ac?.heading})`);
+    check(ac && ac.speed === 320, `dump1090-array: speed → speed (got ${ac?.speed})`);
+  }
+
+  // --- "ground" altitude in dump1090-array format ---
+  {
+    const p = createLocalAdsbProvider();
+    const r = await p.test(settings(arrayFixture));
+    const ground = r.sampleNormalized.find((a) => a.id === 'c0ffee');
+    check(ground != null, 'dump1090-array: ground aircraft found');
+    check(ground && ground.altitude === 0, `dump1090-array: altitude "ground" → 0 (got ${ground?.altitude})`);
+    check(ground && ground.onGround === true, 'dump1090-array: altitude "ground" sets onGround flag');
+  }
+
+  // --- getMeta() exposes raw/normalized counts and format ---
+  {
+    const p = createLocalAdsbProvider();
+    await p.test(settings(arrayFixture));
+    const meta = p.getMeta(settings(arrayFixture));
+    check(meta.rawAircraftCount === 4, `getMeta rawAircraftCount 4 (got ${meta.rawAircraftCount})`);
+    check(meta.aircraftCount === 3, `getMeta aircraftCount 3 (got ${meta.aircraftCount})`);
+    check(meta.detectedFormat === 'dump1090-array', `getMeta detectedFormat (got ${meta.detectedFormat})`);
+  }
+
+  // --- Format B: { aircraft: [...] } — readsb/tar1090 ---
+  const readsb = join(BACKEND, 'test', 'fixtures', 'aircraft.sample.json');
+  {
+    const p = createLocalAdsbProvider();
+    const r = await p.test(settings(readsb));
+    check(r.success === true, 'readsb-aircraft: test succeeds');
+    check(r.detectedFormat === 'readsb-aircraft', `readsb-aircraft: format detected (got ${r.detectedFormat})`);
+    check(r.rawCount === 4, `readsb-aircraft: rawCount 4 (got ${r.rawCount})`);
+    check(r.normalizedCount === 3, `readsb-aircraft: normalizedCount 3 (got ${r.normalizedCount})`);
+  }
+
+  // --- Aircraft missing optional fields do not get dropped ---
+  {
+    const p = createLocalAdsbProvider();
+    const r = await p.test(settings(arrayFixture));
+    // SWA55 has hex/flight/lat/lon/altitude/track/speed but no squawk, category,
+    // nav_heading, seen_pos, t, r, etc. It must still normalize and appear.
+    const min = r.sampleNormalized.find((a) => a.id === 'ac6204');
+    check(min != null, 'dump1090-array: aircraft with only core fields is kept');
+    check(min && min.squawk === undefined, 'dump1090-array: absent squawk → undefined (not empty string)');
+    check(min && min.typeCode === undefined, 'dump1090-array: absent typeCode → undefined');
+  }
+
+  // --- Direct normalizeAircraft for the exact user-reported format ---
+  {
+    const { normalizeAircraft } = await import('../backend/aircraft/aircraftNormalizer.js');
+    const raw = {
+      hex: 'ac6204', flight: 'SWA55', lat: 32.67869, lon: -96.884198,
+      altitude: 15075, track: 206, speed: 320,
+    };
+    const ac = normalizeAircraft(raw, 'local_adsb');
+    check(ac !== null, 'normalizer: exact user-reported dump1090 record normalizes');
+    check(ac && ac.id === 'ac6204', `normalizer: hex → id (got ${ac?.id})`);
+    check(ac && ac.callsign === 'SWA55', `normalizer: flight → callsign (got ${ac?.callsign})`);
+    check(ac && Math.abs(ac.lat - 32.67869) < 1e-5, `normalizer: lat preserved (got ${ac?.lat})`);
+    check(ac && ac.altitude === 15075, `normalizer: altitude numeric (got ${ac?.altitude})`);
+    check(ac && ac.heading === 206, `normalizer: track → heading (got ${ac?.heading})`);
+    check(ac && ac.speed === 320, `normalizer: speed → speed (got ${ac?.speed})`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 console.log(`Above Live — smoke check (port ${PORT})`);
 await integrationTests();
 await unitTests();
@@ -543,5 +637,6 @@ await apiProviderTests();
 await motionAndNormalizerTests();
 await migrationTests();
 await invalidationRelevanceTests();
+await localAdsbFormatTests();
 console.log(failed ? '\nSMOKE CHECK FAILED' : '\nSMOKE CHECK PASSED');
 process.exit(failed ? 1 : 0);

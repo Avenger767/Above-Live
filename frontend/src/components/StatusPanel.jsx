@@ -165,6 +165,10 @@ export default function StatusPanel({ status, aircraftCount, connectionMode, set
             <span className="status-val">{local.sourceType === 'none' ? 'not set' : local.sourceType}</span>
           </div>
           <div className="status-row">
+            <span className="status-key">Format</span>
+            <span className="status-val">{local.detectedFormat || '—'}</span>
+          </div>
+          <div className="status-row">
             <span className="status-key">Configured</span>
             <span className={`status-val ${local.configured ? 'ok' : 'bad'}`}>
               {local.configured ? 'yes' : 'no'}
@@ -173,6 +177,12 @@ export default function StatusPanel({ status, aircraftCount, connectionMode, set
           <div className="status-row">
             <span className="status-key">ADS-B read</span>
             <span className="status-val">{timeAgo(local.lastSuccess)}</span>
+          </div>
+          <div className="status-row">
+            <span className="status-key">Raw / visible</span>
+            <span className="status-val">
+              {local.rawAircraftCount != null ? local.rawAircraftCount : '—'} raw / {local.aircraftCount ?? 0} with position
+            </span>
           </div>
           <div className="status-row">
             <span className="status-key">Data source</span>

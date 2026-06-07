@@ -5,9 +5,23 @@
 // the small aircraft.json it serves.
 //
 // Two sources, in priority order:
-//   1. HTTP URL   (settings.localAdsb.url)   — e.g. http://localhost:8080/data/aircraft.json
+//   1. HTTP URL   (settings.localAdsb.url)   — e.g. http://localhost:8080/data.json
 //   2. File path  (settings.localAdsb.path)  — e.g. /run/dump1090-fa/aircraft.json
 // URL wins if both are set. If neither is set, it reports "not configured".
+//
+// Supported JSON shapes:
+//   A. Root-level array — older Windows dump1090 data.json:
+//        [ { "hex": "abc123", "flight": "SWA55", "lat": …, "lon": …, … }, … ]
+//   B. Wrapped object — modern dump1090-fa / readsb / tar1090 aircraft.json:
+//        { "now": …, "aircraft": [ … ] }    ← preferred key "aircraft"
+//        { "ac": [ … ] }                    ← alternate key used by some builds
+//
+// Common older field names are accepted alongside the modern ones:
+//   hex / icao        → id
+//   flight            → callsign (trimmed)
+//   altitude          → altitude (numeric; "ground" coerced to 0)
+//   track             → heading
+//   speed             → speed (alongside gs / groundspeed)
 //
 // It is stateful (like the API provider): it caches the last good snapshot and
 // keeps serving it for a short staleness window if a read fails, so a single
@@ -24,9 +38,11 @@ const DEFAULT_STALE_MS = 15000;
 export function createLocalAdsbProvider() {
   const name = 'local_adsb';
 
-  let cache = null; // last good normalized aircraft array
-  let lastSuccess = 0; // ts of last successful read
-  let lastError = null; // last error message
+  let cache         = null;   // last good normalized aircraft array
+  let lastRawCount  = 0;      // raw item count from the last successful read
+  let lastFormat    = null;   // 'dump1090-array' | 'readsb-aircraft' | 'unknown'
+  let lastSuccess   = 0;      // ts of last successful read
+  let lastError     = null;   // last error message
 
   // Resolve which source to use from settings. URL takes priority over file.
   function resolveSource(s) {
@@ -44,7 +60,39 @@ export function createLocalAdsbProvider() {
     return Math.max(DEFAULT_STALE_MS, Number.isFinite(v) && v > 0 ? v * 15 : 0);
   }
 
-  // Read + parse the raw feed from the resolved source. Throws on any failure.
+  // Detect which JSON shape the feed uses and extract the raw aircraft array.
+  // Returns { list: Array, format: string }.
+  function extractList(data) {
+    // Shape A — root-level array (older Windows dump1090 data.json).
+    if (Array.isArray(data)) {
+      return { list: data, format: 'dump1090-array' };
+    }
+    // Shape B — wrapped object with "aircraft" or "ac" key (modern dump1090-fa / readsb).
+    if (data && typeof data === 'object') {
+      const list = Array.isArray(data.aircraft) ? data.aircraft
+                 : Array.isArray(data.ac)       ? data.ac
+                 : null;
+      if (list) return { list, format: 'readsb-aircraft' };
+    }
+    return { list: [], format: 'unknown' };
+  }
+
+  // Pre-process raw items before handing them to the normalizer.
+  // Handles the on-ground flag and coerces the "ground" string to 0 for both
+  // alt_baro (modern) and altitude (older dump1090).
+  function preprocess(raw) {
+    const altIsGround = raw.alt_baro === 'ground'
+      || String(raw.altitude).toLowerCase() === 'ground';
+    return {
+      ...raw,
+      onGround: raw.onGround === true || raw.ground === true || altIsGround,
+      alt_baro: raw.alt_baro === 'ground' ? 0 : raw.alt_baro,
+      altitude: altIsGround ? 0 : raw.altitude,
+    };
+  }
+
+  // Read + parse the raw feed from the resolved source.
+  // Returns { list: preprocessedArray, format }.  Throws on any failure.
   async function readRaw(src) {
     let data;
     if (src.type === 'file') {
@@ -60,25 +108,21 @@ export function createLocalAdsbProvider() {
     } else {
       throw new Error('LOCAL_ADSB not configured (set LOCAL_ADSB_URL or LOCAL_ADSB_PATH)');
     }
-    // dump1090/readsb put aircraft under "aircraft"; tolerate "ac" too.
-    // alt_baro can be the string "ground"; coerce it to 0.
-    const list = data.aircraft || data.ac || [];
-    return list.map((a) => ({
-      ...a,
-      // Capture on-ground before "ground" is coerced to 0 (see normalizer).
-      onGround: a.onGround === true || a.ground === true || a.alt_baro === 'ground',
-      alt_baro: a.alt_baro === 'ground' ? 0 : a.alt_baro,
-    }));
+
+    const { list, format } = extractList(data);
+    return { list: list.map(preprocess), format };
   }
 
   // One read that updates cache/state. Returns normalized aircraft.
   async function readAndNormalize(s) {
     const src = resolveSource(s);
-    const rawList = await readRaw(src);
-    const aircraft = normalizeList(rawList, name, s.home); // drops records w/o lat/lon
-    cache = aircraft;
+    const { list, format } = await readRaw(src);
+    lastRawCount = list.length;
+    lastFormat   = format;
+    const aircraft = normalizeList(list, name, s.home); // drops records w/o lat/lon
+    cache       = aircraft;
     lastSuccess = Date.now();
-    lastError = null;
+    lastError   = null;
     return aircraft;
   }
 
@@ -103,11 +147,13 @@ export function createLocalAdsbProvider() {
     const src = resolveSource(s);
     const usingCache = Boolean(cache) && Date.now() - lastSuccess > 2500;
     return {
-      configured: src.type !== 'none',
-      sourceType: src.type, // 'url' | 'file' | 'none'
-      source: src.value || null,
-      aircraftCount: cache ? cache.length : 0,
-      lastSuccess: lastSuccess || null,
+      configured:        src.type !== 'none',
+      sourceType:        src.type, // 'url' | 'file' | 'none'
+      source:            src.value || null,
+      rawAircraftCount:  lastRawCount,   // items received before normalizer filtering
+      aircraftCount:     cache ? cache.length : 0,
+      detectedFormat:    lastFormat,
+      lastSuccess:       lastSuccess || null,
       lastError,
       usingCache,
     };
@@ -123,7 +169,11 @@ export function createLocalAdsbProvider() {
         configured: false,
         sourceType: 'none',
         source: null,
+        rawCount: 0,
         aircraftCount: 0,
+        normalizedCount: 0,
+        detectedFormat: null,
+        sampleNormalized: [],
         sample: [],
         error: 'LOCAL_ADSB not configured (set LOCAL_ADSB_URL or LOCAL_ADSB_PATH)',
       };
@@ -136,7 +186,11 @@ export function createLocalAdsbProvider() {
         configured: true,
         sourceType: src.type,
         source: src.value,
+        rawCount: lastRawCount,
         aircraftCount: aircraft.length,
+        normalizedCount: aircraft.length,
+        detectedFormat: lastFormat,
+        sampleNormalized: aircraft.slice(0, 3),
         sample: aircraft.slice(0, 3),
         error: null,
       };
@@ -148,7 +202,11 @@ export function createLocalAdsbProvider() {
         configured: true,
         sourceType: src.type,
         source: src.value,
+        rawCount: lastRawCount,
         aircraftCount: cache ? cache.length : 0,
+        normalizedCount: cache ? cache.length : 0,
+        detectedFormat: lastFormat,
+        sampleNormalized: cache ? cache.slice(0, 3) : [],
         sample: cache ? cache.slice(0, 3) : [],
         error: err.message,
       };

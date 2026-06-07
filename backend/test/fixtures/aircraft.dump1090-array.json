@@ -1,0 +1,37 @@
+[
+  {
+    "hex": "ac6204",
+    "flight": "SWA55  ",
+    "lat": 32.67869,
+    "lon": -96.884198,
+    "altitude": 15075,
+    "track": 206,
+    "speed": 320
+  },
+  {
+    "hex": "a3b1c9",
+    "flight": "AAL100",
+    "lat": 32.9,
+    "lon": -96.5,
+    "altitude": 35000,
+    "track": 90,
+    "speed": 450,
+    "squawk": "2350"
+  },
+  {
+    "hex": "c0ffee",
+    "flight": "N9876A",
+    "lat": 32.5,
+    "lon": -97.1,
+    "altitude": "ground",
+    "track": 0,
+    "speed": 12
+  },
+  {
+    "hex": "deadbe",
+    "flight": "NOPOS2",
+    "altitude": 28000,
+    "track": 180,
+    "speed": 390
+  }
+]
