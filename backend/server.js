@@ -20,7 +20,7 @@ import { createApiProvider } from './aircraft/providers/apiProvider.js';
 import { createLocalAdsbProvider } from './aircraft/providers/localAdsbProvider.js';
 import { createTrailStore } from './aircraft/trailStore.js';
 import { createWeatherLayer } from './layers/weatherLayer.js';
-import { createSatelliteLayer } from './layers/satelliteLayer.js';
+import { createOrbitalLayer } from './layers/orbitalLayer.js';
 import { createSpaceLayer } from './layers/spaceLayer.js';
 
 const PORT     = Number(process.env.PORT) || 4000;
@@ -35,9 +35,14 @@ const providers = {
 const mockProvider = providers.MOCK;
 
 // ── optional layer registry ───────────────────────────────────────────────────
+// Aircraft is the mission; every layer here is OFF by default, isolated, caches,
+// and never throws into the aircraft path. ISS / satellites / Starlink share the
+// orbital engine (CelesTrak TLE + local propagation); space is sun/moon/planets.
 const layers = {
   weather:    createWeatherLayer(),
-  satellites: createSatelliteLayer(),
+  iss:        createOrbitalLayer('iss'),
+  satellites: createOrbitalLayer('satellites'),
+  starlink:   createOrbitalLayer('starlink'),
   space:      createSpaceLayer(),
 };
 
@@ -167,9 +172,11 @@ function debouncedSyncLayers() {
 function layerSnapshot() {
   const enabled = getSettings().layers || {};
   return {
-    weather:    enabled.weather    ? layers.weather.getData()           : null,
-    satellites: enabled.satellites ? layers.satellites.getData() || [] : [],
-    space:      enabled.space      ? layers.space.getData()             : null,
+    weather:    enabled.weather    ? layers.weather.getData()        : null,
+    iss:        enabled.iss        ? layers.iss.getData() || []       : [],
+    satellites: enabled.satellites ? layers.satellites.getData() || []: [],
+    starlink:   enabled.starlink   ? layers.starlink.getData() || []  : [],
+    space:      enabled.space      ? layers.space.getData()           : null,
     stars:      Boolean(enabled.stars),
   };
 }
@@ -282,7 +289,9 @@ app.get('/api/status', (_req, res) => {
     },
     layers:     s.layers,
     weather:    layers.weather.getMeta(s),
+    iss:        layers.iss.getMeta(s),
     satellites: layers.satellites.getMeta(s),
+    starlink:   layers.starlink.getMeta(s),
     space:      layers.space.getMeta(s),
   });
 });
@@ -300,7 +309,9 @@ app.get('/api/debug/provider', (_req, res) => {
     localAdsb:     providers.LOCAL_ADSB.getMeta(s),
     layers: {
       weather:    layers.weather.getMeta(s),
+      iss:        layers.iss.getMeta(s),
       satellites: layers.satellites.getMeta(s),
+      starlink:   layers.starlink.getMeta(s),
       space:      layers.space.getMeta(s),
     },
   });

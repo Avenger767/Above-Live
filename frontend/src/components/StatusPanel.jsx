@@ -20,6 +20,41 @@ function timeUntil(ts) {
   return s < 60 ? `${s}s` : `${Math.round(s / 60)}m`;
 }
 
+// One status block for an orbital layer (ISS / Satellites / Starlink): rendered
+// count vs. TLE pool, TLE age, last update, and any fetch/cache error.
+function OrbitalRow({ label, meta }) {
+  const m = meta || {};
+  const tleAge = m.tleAgeSeconds != null
+    ? (m.tleAgeSeconds < 3600 ? `${Math.round(m.tleAgeSeconds / 60)}m` : `${Math.round(m.tleAgeSeconds / 3600)}h`)
+    : '—';
+  return (
+    <>
+      <div className="status-row" style={{ marginTop: 8 }}>
+        <span className="status-key">{label}</span>
+        <span className={`status-val ${m.ok ? 'ok' : m.lastError ? 'bad' : ''}`}>
+          {m.ok ? `${m.count}/${m.cap} shown` : m.lastError ? 'error' : 'loading'}
+        </span>
+      </div>
+      <div className="status-row">
+        <span className="status-key">{label} TLE</span>
+        <span className="status-val">{m.tleCount ?? 0} cached · {tleAge} old</span>
+      </div>
+      <div className="status-row">
+        <span className="status-key">{label} updated</span>
+        <span className="status-val">{timeAgo(m.lastSuccess)}</span>
+      </div>
+      {m.lastError && (
+        <div className="status-row">
+          <span className="status-key">{label} error</span>
+          <span className="status-val bad" style={{ maxWidth: '60%', textAlign: 'right', wordBreak: 'break-word' }}>
+            {m.lastError}
+          </span>
+        </div>
+      )}
+    </>
+  );
+}
+
 export default function StatusPanel({ status, aircraftCount, connectionMode, settings, renderStats }) {
   const s = status || {};
   const fallback = s.usingFallback;
@@ -200,7 +235,7 @@ export default function StatusPanel({ status, aircraftCount, connectionMode, set
       )}
 
       {/* Optional layers — only show rows for layers that are enabled */}
-      {(layers.weather || layers.satellites || layers.space) && (
+      {(layers.weather || layers.iss || layers.satellites || layers.starlink || layers.space) && (
         <>
           {layers.weather && (
             <div className="status-row" style={{ marginTop: 8 }}>
@@ -210,21 +245,22 @@ export default function StatusPanel({ status, aircraftCount, connectionMode, set
               </span>
             </div>
           )}
-          {layers.satellites && (
-            <div className="status-row">
-              <span className="status-key">Satellites</span>
-              <span className={`status-val ${s.satellites?.ok ? 'ok' : 'bad'}`}>
-                {s.satellites?.ok ? `${s.satellites.count} tracked` : s.satellites?.lastError || 'loading'}
-              </span>
-            </div>
-          )}
+          {layers.iss && <OrbitalRow label="ISS" meta={s.iss} />}
+          {layers.satellites && <OrbitalRow label="Satellites" meta={s.satellites} />}
+          {layers.starlink && <OrbitalRow label="Starlink" meta={s.starlink} />}
           {layers.space && (
-            <div className="status-row">
-              <span className="status-key">Space</span>
-              <span className={`status-val ${s.space?.ok ? 'ok' : ''}`}>
-                {s.space?.ok ? s.space.moonPhase || 'ok' : 'loading'}
-              </span>
-            </div>
+            <>
+              <div className="status-row" style={{ marginTop: 8 }}>
+                <span className="status-key">Planets</span>
+                <span className={`status-val ${s.space?.ok ? 'ok' : ''}`}>
+                  {s.space?.ok ? `${s.space.aboveHorizon ?? 0}/${s.space.count ?? 0} up` : 'loading'}
+                </span>
+              </div>
+              <div className="status-row">
+                <span className="status-key">Sky updated</span>
+                <span className="status-val">{timeAgo(s.space?.lastSuccess)}</span>
+              </div>
+            </>
           )}
         </>
       )}

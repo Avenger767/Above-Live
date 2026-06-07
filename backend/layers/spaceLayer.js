@@ -1,10 +1,11 @@
 // Above Live — Space layer (optional, OFF by default).
 //
-// A no-network scaffold computed locally: moon phase, a simple day/night +
-// approximate sunrise/sunset at home, and a placeholder visible-planets list.
-// The astronomy here is intentionally approximate — it's a clean interface to
-// build on later, not an ephemeris. It never makes external calls and never
-// throws into the aircraft path.
+// A mostly-local layer: moon phase, a simple day/night + approximate
+// sunrise/sunset at home, and the Sun, Moon, and bright planets (Venus, Mars,
+// Jupiter, Saturn) as azimuth/elevation via a compact ephemeris (lib/astro.js).
+// It never makes external calls and never throws into the aircraft path.
+
+import { computeSky } from './lib/astro.js';
 
 export function createSpaceLayer() {
   const name = 'space';
@@ -28,11 +29,14 @@ export function createSpaceLayer() {
   }
 
   function getMeta(s) {
+    const bodies = cache?.bodies || [];
     return {
       enabled: Boolean(s?.layers?.space),
       ok: Boolean(cache),
       moonPhase: cache?.moon?.name || null,
       isDay: cache?.sun?.isDay ?? null,
+      count: bodies.length,                                  // sun+moon+planets
+      aboveHorizon: bodies.filter((b) => b.el > 0).length,   // currently visible
       lastSuccess: lastSuccess || null,
       pollIntervalMs: pollIntervalMs(s),
     };
@@ -48,16 +52,17 @@ export function createSpaceLayer() {
 // --- Calculations (approximate, dependency-free) ---------------------------
 
 function compute(home, date) {
+  // Sun + Moon + bright planets as azimuth/elevation (for the sky-dome render).
+  const bodies = computeSky(home, date);
+  // Keep a planets summary (names of those above the horizon) for the info card.
+  const planets = bodies
+    .filter((b) => b.kind === 'planet')
+    .map((b) => ({ name: b.name, az: Math.round(b.az), el: Math.round(b.el), visible: b.el > 0 }));
   return {
     moon: moonPhase(date),
     sun: sunInfo(home.lat, home.lon, date),
-    // Placeholder list — a real ephemeris can replace this later.
-    planets: [
-      { name: 'Venus', visible: null },
-      { name: 'Mars', visible: null },
-      { name: 'Jupiter', visible: null },
-      { name: 'Saturn', visible: null },
-    ],
+    bodies,    // [{ name, kind:'sun'|'moon'|'planet', az, el }] — rendered on the sky dome
+    planets,   // summary for the SpaceCard
     timestamp: Date.now(),
   };
 }

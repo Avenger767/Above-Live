@@ -17,7 +17,7 @@ export default function App() {
   const [status, setStatus] = useState(null);
   const [aircraft, setAircraft] = useState([]);
   const [trails, setTrails] = useState({});
-  const [layerData, setLayerData] = useState({ weather: null, satellites: [], space: null, stars: true });
+  const [layerData, setLayerData] = useState({ weather: null, iss: [], satellites: [], starlink: [], space: null, stars: true });
   const [connectionMode, setConnectionMode] = useState('connecting');
   const [wsApiState, setWsApiState] = useState({});
   const [panelOpen, setPanelOpen] = useState(true);

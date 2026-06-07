@@ -50,7 +50,9 @@
   "layers": {
     "aircraft": true,
     "weather": false,
+    "iss": false,
     "satellites": false,
+    "starlink": false,
     "space": false,
     "stars": true
   },
@@ -58,11 +60,25 @@
     "provider": "openmeteo",
     "pollIntervalMs": 300000
   },
+  "iss": {
+    "group": "stations",
+    "cap": 1,
+    "pollIntervalMs": 5000,
+    "tleTtlMs": 21600000
+  },
   "satellites": {
-    "provider": "iss",
-    "pollIntervalMs": 10000
+    "group": "visual",
+    "cap": 60,
+    "pollIntervalMs": 5000,
+    "tleTtlMs": 21600000
+  },
+  "starlink": {
+    "group": "starlink",
+    "cap": 25,
+    "pollIntervalMs": 8000,
+    "tleTtlMs": 43200000
   },
   "space": {
-    "pollIntervalMs": 3600000
+    "pollIntervalMs": 60000
   }
 }

@@ -40,7 +40,7 @@ export function changedPaths(before, after, paths) {
 // Did any layer enable/config change? (layers.* + per-layer config blocks.)
 export function layersChanged(before, after) {
   const enabled = JSON.stringify(before.layers || {}) !== JSON.stringify(after.layers || {});
-  const cfg = ['weather', 'satellites', 'space'].some(
+  const cfg = ['weather', 'iss', 'satellites', 'starlink', 'space'].some(
     (k) => JSON.stringify(before[k] || {}) !== JSON.stringify(after[k] || {})
   );
   return enabled || cfg;

@@ -28,8 +28,10 @@ export const DEFAULT_SETTINGS = {
   localAdsb: { url: 'http://localhost:8080/data/aircraft.json', path: '', pollIntervalMs: 1000 },
 
   // Optional display layers (aircraft + stars on; the rest off by default).
-  layers: { aircraft: true, weather: false, satellites: false, space: false, stars: true },
+  layers: { aircraft: true, weather: false, iss: false, satellites: false, starlink: false, space: false, stars: true },
   weather: { provider: 'openmeteo', pollIntervalMs: 300000 },
-  satellites: { provider: 'iss', pollIntervalMs: 10000 },
-  space: { pollIntervalMs: 3600000 },
+  iss:        { group: 'stations', cap: 1,  pollIntervalMs: 5000,  tleTtlMs: 21600000 },
+  satellites: { group: 'visual',   cap: 60, pollIntervalMs: 5000,  tleTtlMs: 21600000 },
+  starlink:   { group: 'starlink', cap: 25, pollIntervalMs: 8000,  tleTtlMs: 43200000 },
+  space: { pollIntervalMs: 60000 },
 };

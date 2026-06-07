@@ -41,6 +41,33 @@ export function makeProjector({ home, rangeNm, center, radiusPx, calibration }) 
   };
 }
 
+// Build a sky-dome projector for celestial objects (sun / moon / planets) given
+// by azimuth (0° = N, 90° = E) and elevation (deg above horizon). The zenith
+// maps to the center and the horizon (el = 0) to the radar edge, so an object
+// directly overhead sits at home and one near the horizon sits near the rim.
+// Calibration rotation/flip is applied so it lines up with the projected field.
+export function makeSkyProjector({ center, radiusPx, calibration }) {
+  const cal = calibration || {};
+  const rot = ((cal.rotation ?? 0) * Math.PI) / 180;
+  const flipH = cal.flipH ? -1 : 1;
+  const flipV = cal.flipV ? -1 : 1;
+
+  return function projectSky(azDeg, elDeg) {
+    const el = Math.max(0, Math.min(90, elDeg));
+    const r = radiusPx * (1 - el / 90); // zenith → center, horizon → edge
+    const a = (azDeg * Math.PI) / 180;
+    // Azimuth 0 = north = up (−y); east = +x.
+    let x = r * Math.sin(a) * flipH;
+    let y = -r * Math.cos(a) * flipV;
+    const rx = x * Math.cos(rot) - y * Math.sin(rot);
+    const ry = x * Math.sin(rot) + y * Math.cos(rot);
+    return {
+      x: center.x + rx + (cal.offsetX ?? 0),
+      y: center.y + ry + (cal.offsetY ?? 0),
+    };
+  };
+}
+
 // Adjust a heading so the drawn aircraft glyph matches the rotated/flipped map.
 export function projectHeading(headingDeg, calibration) {
   const cal = calibration || {};

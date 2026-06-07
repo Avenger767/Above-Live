@@ -41,6 +41,9 @@ export function getModeConfig(mode, brightness = 1, brightnessMap = {}) {
         labels:           eb('labels', 1),
         trails:           eb('trails', 1),
         satellites:       eb('satellites', 1),
+        iss:              eb('satellites', 1),
+        starlink:         eb('starlink', 0.55),   // Starlink intentionally dim
+        planets:          eb('planets', 0.85),
         weatherCanvas:    0,
       };
 
@@ -60,6 +63,9 @@ export function getModeConfig(mode, brightness = 1, brightnessMap = {}) {
         labels:           B,
         trails:           B * 0.7,
         satellites:       B,
+        iss:              B,
+        starlink:         B * 0.55,
+        planets:          B * 0.85,
         weatherCanvas:    B,
       };
 
@@ -79,6 +85,9 @@ export function getModeConfig(mode, brightness = 1, brightnessMap = {}) {
         labels:           B * 0.4,
         trails:           B * 0.3,
         satellites:       B * 0.9,
+        iss:              B * 0.9,
+        starlink:         B * 0.5,
+        planets:          B * 0.85,
         weatherCanvas:    B * 0.8,
       };
 
@@ -98,6 +107,9 @@ export function getModeConfig(mode, brightness = 1, brightnessMap = {}) {
         labels:           B,
         trails:           B,
         satellites:       B,
+        iss:              B,
+        starlink:         B * 0.6,
+        planets:          B,
         weatherCanvas:    0,
       };
 
@@ -117,6 +129,9 @@ export function getModeConfig(mode, brightness = 1, brightnessMap = {}) {
         labels:           B,
         trails:           B,
         satellites:       B,
+        iss:              B,
+        starlink:         B * 0.55,
+        planets:          B * 0.9,
         weatherCanvas:    B,
       };
   }

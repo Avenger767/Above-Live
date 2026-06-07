@@ -331,51 +331,68 @@ PROVIDER=LOCAL_ADSB LOCAL_ADSB_URL= LOCAL_ADSB_PATH=$(pwd)/backend/test/fixtures
 
 ---
 
-## 11d. Optional display layers (weather, satellites, space, stars)
+## 11d. Optional display layers (stars, ISS, satellites, Starlink, planets, weather)
 
 Above Live's mission is **aircraft**. Everything below is an **optional layer**, **off by default**
 (except the local star background). Each layer has its **own cache + backoff**, runs on its own
-timer, uses **simple mock/demo data** when a real source isn't configured, and **never blocks or
-crashes the aircraft display** — if every layer fails, aircraft keep flying.
+timer, and **never blocks or crashes the aircraft display** — if every layer fails, aircraft keep
+flying. **No space layer ever makes an external call inside the 1 Hz aircraft loop**: orbital data
+is downloaded rarely (cached for hours) and positions are propagated **locally**.
 
 Toggle them in the panel under **Display → Layers**, or enable via env/settings.
 
+**Stars** — a local generated starfield background (no network). On by default; toggle with
+`STARS_ENABLED=false`.
+
+**ISS** — the International Space Station from **CelesTrak** TLE data (group `stations`, no key).
+The TLE is downloaded once and cached for hours; the sub-point is propagated **locally** (Keplerian
++ J2 secular precession — see `backend/layers/lib/orbital.js`). Drawn with a distinct icon and an
+`ISS` label.
+```
+ISS_ENABLED=true
+```
+
+**Satellites** — a CelesTrak TLE group (default `visual` — the brightest naked-eye satellites),
+propagated locally and **capped** (default 60, nearest to home) so the display stays readable.
+```
+SATELLITES_ENABLED=true
+SATELLITE_GROUP=visual          # any CelesTrak GROUP, e.g. stations, visual, science
+SATELLITE_POLL_INTERVAL_MS=5000 # LOCAL propagation cadence (not a download)
+```
+
+**Starlink** — the CelesTrak `starlink` group. **OFF by default**, rendered **dimmer** than
+aircraft and **capped to 25** objects (nearest to home) to avoid clutter.
+```
+STARLINK_ENABLED=true
+```
+
+**Planets** — Sun, Moon, Venus, Mars, Jupiter and Saturn computed **locally** (compact ephemeris,
+no network) as azimuth/elevation and drawn on a **sky dome** (zenith = center, horizon = edge).
+Also powers the moon-phase / day-night corner card. Recomputed every minute by default.
+```
+SPACE_ENABLED=true
+SPACE_POLL_INTERVAL_MS=60000
+```
+
 **Weather** — centered on home. Default provider **Open-Meteo** (free, no key); set
-`WEATHER_PROVIDER=mock` for offline demo data. Shows a subtle corner card (temperature,
-condition, cloud %, wind, visibility), a wind arrow, a faint cloud wash scaled to cloud cover, and
-a light rain tint when precipitation is active — all kept low so they never overpower aircraft.
+`WEATHER_PROVIDER=mock` for offline demo data. Subtle corner card, wind arrow, and faint cloud/rain
+wash (suppressed in projector mode).
 ```
 WEATHER_ENABLED=true
 WEATHER_PROVIDER=openmeteo
 WEATHER_POLL_INTERVAL_MS=300000
 ```
 
-**Satellites / ISS** — default provider **iss** fetches the ISS position from the free
-wheretheiss.at API (no key); `SATELLITE_PROVIDER=mock` shows demo satellites near home. Satellites
-draw with a distinct icon and blue/white glow (clearly not aircraft) and label when labels are on.
-Most real passes fall outside the radar range and show in the status panel rather than on-screen.
-```
-SATELLITES_ENABLED=true
-SATELLITE_PROVIDER=iss
-SATELLITE_POLL_INTERVAL_MS=10000
-```
+**Caps & cadence (performance).** Orbital TLEs are cached (`iss`/`satellites` 6 h, `starlink` 12 h);
+positions update on each layer's `pollIntervalMs` (5–8 s), never per aircraft frame. Rendered
+objects are capped per layer (`settings.<layer>.cap`). Space objects are deliberately subtle —
+aircraft stay the brightest, most prominent elements, and projector mode keeps its black background.
 
-**Space / Planets** — a no-network scaffold computed locally: moon phase + illumination, a simple
-day/night indicator with approximate sunrise/sunset, and a placeholder visible-planets list, shown
-in a small corner card.
-```
-SPACE_ENABLED=true
-SPACE_POLL_INTERVAL_MS=3600000
-```
-
-**Stars** — a local generated starfield background (no network). On by default; toggle with
-`STARS_ENABLED=false`.
-
-Layer status (configured / ok / last update / errors) appears in the **Status** tab, and each
-layer has a read-only endpoint: `/api/weather`, `/api/satellites`, `/api/space`.
+Layer status (rendered/cap counts, TLE pool + age, last update, errors) appears in the **Status**
+tab. Read-only endpoints: `/api/weather`, `/api/satellites`, `/api/space`.
 
 > **Guarantee:** optional layers are isolated. Aircraft remain primary and keep working even if
-> weather, satellite, and space sources are all unreachable.
+> every space/weather source is unreachable.
 
 ---
 

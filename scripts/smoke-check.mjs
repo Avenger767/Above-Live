@@ -86,11 +86,19 @@ async function integrationTests() {
 
     // Optional layers present and OFF by default (except stars).
     check(status.layers && status.layers.weather === false, 'weather layer OFF by default');
+    check(status.layers && status.layers.iss === false, 'ISS layer OFF by default');
     check(status.layers && status.layers.satellites === false, 'satellites layer OFF by default');
+    check(status.layers && status.layers.starlink === false, 'starlink layer OFF by default');
     check(status.layers && status.layers.space === false, 'space layer OFF by default');
+    check(status.layers && status.layers.stars === true, 'stars layer ON by default');
     check(status.weather && status.weather.enabled === false, 'weather layer not enabled (no external calls)');
+    check(status.iss && status.iss.enabled === false, 'ISS layer not enabled (no external calls)');
     check(status.satellites && status.satellites.enabled === false, 'satellite layer not enabled (no external calls)');
+    check(status.starlink && status.starlink.enabled === false, 'starlink layer not enabled (no external calls)');
     check(status.space && status.space.enabled === false, 'space layer not enabled (no external calls)');
+    // Orbital layer meta shape (cap/group) present even while off.
+    check(status.iss && status.iss.cap === 1 && status.iss.group === 'stations', 'ISS meta: cap 1, group stations');
+    check(status.starlink && status.starlink.cap === 25, 'starlink meta: cap 25');
 
     // provider-test for MOCK works.
     const pt = await getJson('/api/provider-test?provider=MOCK');
@@ -160,11 +168,11 @@ async function unitTests() {
 
   // Layers: disabled layers do nothing and make no calls.
   const { createWeatherLayer } = await import('../backend/layers/weatherLayer.js');
-  const { createSatelliteLayer } = await import('../backend/layers/satelliteLayer.js');
+  const { createOrbitalLayer } = await import('../backend/layers/orbitalLayer.js');
   const { createSpaceLayer } = await import('../backend/layers/spaceLayer.js');
   const off = { home, layers: { weather: false, satellites: false, space: false } };
   const weather = createWeatherLayer();
-  const sats = createSatelliteLayer();
+  const sats = createOrbitalLayer('satellites');
   const space = createSpaceLayer();
   check(weather.getMeta(off).enabled === false && weather.getData() === null, 'weather layer quiet when disabled');
   check(sats.getMeta(off).enabled === false && sats.getData().length === 0, 'satellite layer quiet when disabled');
@@ -175,12 +183,11 @@ async function unitTests() {
   const sd = space.getData();
   check(sd && sd.moon && typeof sd.moon.name === 'string', `space layer computes moon phase (${sd?.moon?.name})`);
   check(sd && sd.sun && typeof sd.sun.isDay === 'boolean', 'space layer computes day/night');
+  check(Array.isArray(sd.bodies) && sd.bodies.length === 6, `space layer computes 6 bodies (got ${sd?.bodies?.length})`);
 
-  // Weather + satellite MOCK providers produce data with no network.
+  // Weather MOCK provider produces data with no network.
   await weather.refresh({ home, weather: { provider: 'mock' } });
   check(weather.getData() && weather.getData().source === 'mock', 'weather mock provider yields data offline');
-  await sats.refresh({ home, satellites: { provider: 'mock' } });
-  check(sats.getData().length > 0, `satellite mock provider yields sats offline (${sats.getData().length})`);
 }
 
 // ---------------------------------------------------------------------------
@@ -496,11 +503,13 @@ async function invalidationRelevanceTests() {
     check(changed.length === 0, `display-only "${label}" does NOT invalidate API`);
   }
 
-  // Toggling stars (a layer unrelated to aircraft fetch) must not invalidate API.
-  {
-    const after = clone(base); after.layers.stars = false;
-    check(changedPaths(base, after, API_RELEVANT_PATHS).length === 0, 'layer "stars" does NOT invalidate API');
-    check(layersChanged(base, after) === true, 'layer "stars" IS a layer change (sync layers)');
+  // Toggling space-object layers must not invalidate the API, but IS a layer
+  // change (so the server re-syncs layer timers).
+  for (const key of ['stars', 'iss', 'satellites', 'starlink', 'space']) {
+    const after = clone(base);
+    after.layers = { ...after.layers, [key]: !after.layers[key] };
+    check(changedPaths(base, after, API_RELEVANT_PATHS).length === 0, `layer "${key}" does NOT invalidate API`);
+    check(layersChanged(base, after) === true, `layer "${key}" IS a layer change (sync layers)`);
   }
 
   // --- aircraft-fetch-relevant changes MUST invalidate the API ---
@@ -630,6 +639,88 @@ async function localAdsbFormatTests() {
 }
 
 // ---------------------------------------------------------------------------
+// Part H — space layers (orbital TLE/GP propagation + planets; no network)
+// ---------------------------------------------------------------------------
+async function spaceLayerTests() {
+  console.log('\nPart H — space layers: orbital + planets (no network)');
+  const orbital = await import('../backend/layers/lib/orbital.js');
+  const astro = await import('../backend/layers/lib/astro.js');
+
+  // A real ISS TLE (epoch 2024-001).
+  const issTle = [
+    'ISS (ZARYA)',
+    '1 25544U 98067A   24001.50000000  .00016717  00000-0  30000-3 0  9999',
+    '2 25544  51.6400 208.0000 0006703 130.0000 325.0000 15.50000000 10000',
+  ].join('\n');
+
+  // --- TLE text parsing (3-line) ---
+  const els = orbital.parseTleText(issTle);
+  check(els.length === 1, `TLE parse: one element set (got ${els.length})`);
+  check(els[0].satnum === 25544, `TLE parse: satnum 25544 (got ${els[0].satnum})`);
+  check(Math.abs(els[0].incloDeg - 51.64) < 1e-6, `TLE parse: inclination 51.64 (got ${els[0].incloDeg})`);
+  check(Math.abs(els[0].noRevPerDay - 15.5) < 1e-6, `TLE parse: mean motion 15.5 (got ${els[0].noRevPerDay})`);
+
+  // --- Propagation: sub-point sane (lat within inclination, LEO altitude) ---
+  const pos = orbital.propagate(els[0], els[0].epoch);
+  check(pos && Math.abs(pos.lat) <= 51.7, `propagate: |lat| <= inclination (got ${pos?.lat?.toFixed(2)})`);
+  check(pos && pos.altKm > 350 && pos.altKm < 470, `propagate: ISS altitude ~400km (got ${pos?.altKm?.toFixed(0)})`);
+  check(pos && pos.lon >= -180 && pos.lon <= 180, `propagate: lon normalized (got ${pos?.lon?.toFixed(1)})`);
+
+  // Half an orbit (~46 min) later, latitude sign flips hemispheres.
+  const half = orbital.propagate(els[0], new Date(els[0].epoch.getTime() + 46 * 60000));
+  check(half && Math.sign(half.lat) !== Math.sign(pos.lat), 'propagate: latitude swings hemisphere over half orbit');
+
+  // --- GP JSON parsing produces the same element shape ---
+  const gp = orbital.parseGpJson([{
+    OBJECT_NAME: 'ISS (ZARYA)', NORAD_CAT_ID: 25544, EPOCH: '2024-01-01T12:00:00',
+    MEAN_MOTION: 15.5, ECCENTRICITY: 0.0006703, INCLINATION: 51.64,
+    RA_OF_ASC_NODE: 208.0, ARG_OF_PERICENTER: 130.0, MEAN_ANOMALY: 325.0,
+  }]);
+  check(gp.length === 1 && gp[0].satnum === 25544, 'GP JSON parse: satnum 25544');
+  check(Math.abs(gp[0].incloDeg - 51.64) < 1e-6, 'GP JSON parse: inclination mapped');
+  const gpPos = orbital.propagate(gp[0], gp[0].epoch);
+  check(gpPos && Number.isFinite(gpPos.lat) && Number.isFinite(gpPos.lon), 'GP JSON propagate: finite sub-point');
+
+  // --- Malformed input is handled gracefully ---
+  check(orbital.parseTleText('garbage\nnot a tle').length === 0, 'TLE parse: junk → empty');
+  check(orbital.parseTleText('').length === 0, 'TLE parse: empty string → empty');
+  check(orbital.parseGpJson(null).length === 0, 'GP JSON parse: null → empty');
+
+  // --- propagateAll caps + shapes objects ---
+  const many = orbital.parseTleText([issTle, issTle, issTle].join('\n')); // 3 copies
+  const objs = orbital.propagateAll(many, new Date(), 'satellite');
+  check(objs.length === 3 && objs.every((o) => o.source === 'satellite' && 'altitudeKm' in o),
+    `propagateAll: shapes objects (got ${objs.length})`);
+
+  // --- Astro: 6 bodies, az in [0,360), el in [-90,90] ---
+  const home = { lat: 32.7767, lon: -96.797 };
+  const sky = astro.computeSky(home, new Date('2026-06-07T18:00:00Z'));
+  check(sky.length === 6, `astro: 6 bodies (got ${sky.length})`);
+  check(sky.every((b) => b.az >= 0 && b.az < 360 && b.el >= -90 && b.el <= 90), 'astro: az/el in range');
+  const sun = sky.find((b) => b.kind === 'sun');
+  check(sun && sun.el > 60, `astro: Dallas midday Sun high (el ${sun?.el?.toFixed(0)})`);
+  check(sky.filter((b) => b.kind === 'planet').length === 4, 'astro: 4 planets present');
+
+  // --- Orbital layer: disabled = no data, capped, status shape ---
+  const { createOrbitalLayer } = await import('../backend/layers/orbitalLayer.js');
+  const iss = createOrbitalLayer('iss');
+  const offMeta = iss.getMeta({ home, layers: { iss: false } });
+  check(offMeta.enabled === false && iss.getData().length === 0, 'orbital(iss): quiet when disabled');
+  check(offMeta.cap === 1, `orbital(iss): default cap 1 (got ${offMeta.cap})`);
+  check(offMeta.group === 'stations', `orbital(iss): default group stations (got ${offMeta.group})`);
+  const slMeta = createOrbitalLayer('starlink').getMeta({ home, layers: { starlink: false } });
+  check(slMeta.cap === 25, `orbital(starlink): default cap 25 (got ${slMeta.cap})`);
+
+  // --- Space layer getMeta exposes counts + last update ---
+  const { createSpaceLayer } = await import('../backend/layers/spaceLayer.js');
+  const space = createSpaceLayer();
+  await space.refresh({ home, space: {} });
+  const sm = space.getMeta({ home, layers: { space: true } });
+  check(sm.count === 6, `space getMeta: count 6 (got ${sm.count})`);
+  check(typeof sm.aboveHorizon === 'number' && sm.lastSuccess > 0, 'space getMeta: aboveHorizon + lastSuccess');
+}
+
+// ---------------------------------------------------------------------------
 console.log(`Above Live — smoke check (port ${PORT})`);
 await integrationTests();
 await unitTests();
@@ -638,5 +729,6 @@ await motionAndNormalizerTests();
 await migrationTests();
 await invalidationRelevanceTests();
 await localAdsbFormatTests();
+await spaceLayerTests();
 console.log(failed ? '\nSMOKE CHECK FAILED' : '\nSMOKE CHECK PASSED');
 process.exit(failed ? 1 : 0);

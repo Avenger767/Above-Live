@@ -16,6 +16,7 @@ import { getTheme } from '../lib/themes.js';
 import { getModeConfig } from '../lib/displayModes.js';
 import {
   makeProjector,
+  makeSkyProjector,
   projectHeading,
   getCalibration,
   labelRotationRad,
@@ -30,7 +31,14 @@ import {
   rgba,
   glyphSeed,
 } from '../lib/aircraftSymbols.js';
-import { drawSatellite, drawWindArrow } from '../lib/layerSymbols.js';
+import {
+  drawSatellite,
+  drawWindArrow,
+  drawIss,
+  drawStarlinkDot,
+  drawCelestial,
+  CELESTIAL_COLORS,
+} from '../lib/layerSymbols.js';
 import { WeatherCard, SpaceCard } from './LayerCards.jsx';
 import {
   updateAircraftTracks,
@@ -434,8 +442,8 @@ function draw(ctx, st, props, dt, nowMs) {
     drawLabels(ctx, st, settings, visible, mc, w, h, size);
   }
 
-  // --- Optional layers (weather wash + wind, satellites) ---
-  drawOptionalLayers(ctx, settings, mc, ld, theme, project, w, h, size);
+  // --- Optional layers (weather wash + wind, orbital objects, celestial) ---
+  drawOptionalLayers(ctx, settings, mc, ld, theme, project, w, h, size, { center, radiusPx, cal });
 }
 
 // ---------------------------------------------------------------------------
@@ -574,7 +582,7 @@ function getThemeLabelColor(settings) {
 // ---------------------------------------------------------------------------
 // Optional layers
 // ---------------------------------------------------------------------------
-function drawOptionalLayers(ctx, settings, mc, ld, theme, project, w, h, size) {
+function drawOptionalLayers(ctx, settings, mc, ld, theme, project, w, h, size, geom) {
   const layers = settings.layers || {};
   const showLabels = settings.display.labels !== false;
 
@@ -609,29 +617,92 @@ function drawOptionalLayers(ctx, settings, mc, ld, theme, project, w, h, size) {
     }
   }
 
-  // Satellites / ISS.
+  const onScreen = (p) => p.x >= -40 && p.x <= w + 40 && p.y >= -40 && p.y <= h + 40;
+  const acScale = settings.display.aircraftSize ?? 1;
+
+  // --- Celestial bodies (sun / moon / planets) on the sky dome ---
+  // Drawn first so orbital + aircraft sit on top. Subtle by design.
+  if (layers.space && ld.space && Array.isArray(ld.space.bodies) && geom) {
+    const projectSky = makeSkyProjector({ center: geom.center, radiusPx: geom.radiusPx, calibration: geom.cal });
+    for (const body of ld.space.bodies) {
+      if (!(body.el > 0)) continue; // below horizon
+      const p = projectSky(body.az, body.el);
+      const color = CELESTIAL_COLORS[body.name] || '#dfe6f0';
+      drawCelestial(ctx, p.x, p.y, body.kind, color, mc.planets);
+      if (showLabels && body.kind !== 'sun') {
+        ctx.save();
+        ctx.globalAlpha = mc.planets * 0.9;
+        ctx.shadowBlur = 0;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
+        ctx.font = `${mc.labelDimSize}px ui-monospace, Menlo, Consolas, monospace`;
+        ctx.fillStyle = color;
+        ctx.fillText(body.name, p.x + 8, p.y - 6);
+        ctx.restore();
+      }
+    }
+  }
+
+  // --- Starlink (many, faint, capped backend-side) ---
+  if (layers.starlink && Array.isArray(ld.starlink) && ld.starlink.length) {
+    for (const sat of ld.starlink) {
+      const p = project(sat.lat, sat.lon);
+      if (!onScreen(p)) continue;
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      drawStarlinkDot(ctx, 2.4 * acScale, theme.satellite, mc.starlink);
+      ctx.restore();
+    }
+  }
+
+  // --- Satellites (generic) ---
   if (layers.satellites && Array.isArray(ld.satellites) && ld.satellites.length) {
-    const satSize = 9 * (settings.display.aircraftSize ?? 1);
-    ctx.save();
+    const satSize = 8 * acScale;
     for (const sat of ld.satellites) {
       const p = project(sat.lat, sat.lon);
-      if (p.x < -40 || p.x > w + 40 || p.y < -40 || p.y > h + 40) continue;
+      if (!onScreen(p)) continue;
       ctx.save();
       ctx.globalAlpha = mc.satellites;
       ctx.translate(p.x, p.y);
       drawSatellite(ctx, satSize, theme.satellite, theme.satelliteGlow);
       ctx.restore();
       if (showLabels) {
-        ctx.globalAlpha = mc.satellites;
+        ctx.save();
+        ctx.globalAlpha = mc.satellites * 0.85;
         ctx.shadowBlur = 0;
         ctx.textAlign = 'left';
         ctx.textBaseline = 'top';
-        ctx.font = `bold ${mc.labelSize - 1}px ui-monospace, Menlo, Consolas, monospace`;
+        ctx.font = `${mc.labelDimSize}px ui-monospace, Menlo, Consolas, monospace`;
         ctx.fillStyle = theme.satellite;
         ctx.fillText(sat.name || sat.id, p.x + satSize, p.y - satSize * 0.6);
+        ctx.restore();
       }
     }
-    ctx.restore();
+  }
+
+  // --- ISS (distinct, brighter, always labeled) ---
+  if (layers.iss && Array.isArray(ld.iss) && ld.iss.length) {
+    const issSize = 11 * acScale;
+    for (const sat of ld.iss) {
+      const p = project(sat.lat, sat.lon);
+      if (!onScreen(p)) continue;
+      ctx.save();
+      ctx.globalAlpha = mc.iss;
+      ctx.translate(p.x, p.y);
+      drawIss(ctx, issSize, theme.satellite, theme.satelliteGlow);
+      ctx.restore();
+      if (showLabels) {
+        ctx.save();
+        ctx.globalAlpha = mc.iss;
+        ctx.shadowBlur = 0;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
+        ctx.font = `bold ${mc.labelSize}px ui-monospace, Menlo, Consolas, monospace`;
+        ctx.fillStyle = '#ffffff';
+        ctx.fillText('ISS', p.x + issSize * 1.2, p.y - issSize * 0.6);
+        ctx.restore();
+      }
+    }
   }
 }
 

@@ -55,12 +55,25 @@ export const DEFAULT_SETTINGS = {
 
   // Optional display layers. Aircraft is the mission; the rest are OFF by
   // default. "stars" is a free local starfield (no network) so it's on.
-  layers: { aircraft: true, weather: false, satellites: false, space: false, stars: true },
+  layers: {
+    aircraft: true,
+    weather: false,
+    iss: false,
+    satellites: false,
+    starlink: false,
+    space: false,        // sun / moon / planets
+    stars: true,
+  },
 
   // Per-layer config (only used when the matching layer is enabled).
   weather: { provider: 'openmeteo', pollIntervalMs: 300000 },
-  satellites: { provider: 'iss', pollIntervalMs: 10000 },
-  space: { pollIntervalMs: 3600000 },
+  // Orbital layers (CelesTrak TLE group + local propagation). cap limits the
+  // rendered objects; tleTtlMs is how long a TLE download is reused (hours);
+  // pollIntervalMs is the LOCAL propagation cadence (no network).
+  iss:        { group: 'stations', cap: 1,  pollIntervalMs: 5000,  tleTtlMs: 21600000 },
+  satellites: { group: 'visual',   cap: 60, pollIntervalMs: 5000,  tleTtlMs: 21600000 },
+  starlink:   { group: 'starlink', cap: 25, pollIntervalMs: 8000,  tleTtlMs: 43200000 },
+  space: { pollIntervalMs: 60000 }, // sun/moon/planets recompute (1 min)
 };
 
 // Interpret common truthy strings from env vars ("1", "true", "yes", "on").
@@ -107,10 +120,12 @@ function applyEnv(settings) {
   if (process.env.WEATHER_POLL_INTERVAL_MS)
     s.weather.pollIntervalMs = Number(process.env.WEATHER_POLL_INTERVAL_MS);
 
+  if (process.env.ISS_ENABLED) s.layers.iss = truthy(process.env.ISS_ENABLED);
   if (process.env.SATELLITES_ENABLED) s.layers.satellites = truthy(process.env.SATELLITES_ENABLED);
-  if (process.env.SATELLITE_PROVIDER) s.satellites.provider = process.env.SATELLITE_PROVIDER;
+  if (process.env.SATELLITE_GROUP) s.satellites.group = process.env.SATELLITE_GROUP;
   if (process.env.SATELLITE_POLL_INTERVAL_MS)
     s.satellites.pollIntervalMs = Number(process.env.SATELLITE_POLL_INTERVAL_MS);
+  if (process.env.STARLINK_ENABLED) s.layers.starlink = truthy(process.env.STARLINK_ENABLED);
 
   if (process.env.SPACE_ENABLED) s.layers.space = truthy(process.env.SPACE_ENABLED);
   if (process.env.SPACE_POLL_INTERVAL_MS)

@@ -10,9 +10,11 @@ const PROVIDERS = ['MOCK', 'API', 'LOCAL_ADSB'];
 
 const LAYER_TOGGLES = [
   { key: 'stars', label: 'Stars' },
+  { key: 'iss', label: 'ISS' },
+  { key: 'satellites', label: 'Satellites' },
+  { key: 'starlink', label: 'Starlink' },
+  { key: 'space', label: 'Planets' },
   { key: 'weather', label: 'Weather' },
-  { key: 'satellites', label: 'Satellites / ISS' },
-  { key: 'space', label: 'Space / Planets' },
 ];
 
 // Individual element brightness sliders shown only in projector mode.
@@ -222,6 +224,7 @@ export default function ControlPanel({ settings, onChange, onToggleFullscreen, o
       ))}
       <p className="field-hint">
         Optional layers are off by default and never affect the aircraft display.
+        ISS, Satellites &amp; Starlink use cached CelesTrak orbits; Planets are computed locally.
       </p>
 
       <div className="btn-row">
