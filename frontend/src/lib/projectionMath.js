@@ -90,10 +90,25 @@ const CALIBRATION_DEFAULTS = {
   offsetX: 0, offsetY: 0, scale: 1, rotation: 0, flipH: false, flipV: false,
 };
 
+// Calibration scale bounds. The display can be expanded up to 10× for
+// aggressive radar/projector tuning; values outside the range (or non-finite)
+// are clamped so a bad setting can never blow the projection up or invert it.
+export const SCALE_MIN = 0.25;
+export const SCALE_MAX = 10;
+
+export function clampScale(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 1;
+  return Math.max(SCALE_MIN, Math.min(SCALE_MAX, n));
+}
+
 // Merge a settings.calibration object onto safe defaults so a partial/missing
-// calibration never produces NaNs in the projector.
+// calibration never produces NaNs in the projector. Scale is always clamped to
+// the supported range.
 export function getCalibration(settings) {
-  return { ...CALIBRATION_DEFAULTS, ...((settings && settings.calibration) || {}) };
+  const merged = { ...CALIBRATION_DEFAULTS, ...((settings && settings.calibration) || {}) };
+  merged.scale = clampScale(merged.scale);
+  return merged;
 }
 
 // Independent label rotation (radians). Lets text read upright from where the

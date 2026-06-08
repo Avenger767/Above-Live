@@ -2,7 +2,7 @@
 // Loads/saves settings from data/settings.json, applies sane defaults, and
 // lets environment variables override file values (env wins where present).
 
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -53,7 +53,7 @@ export const DEFAULT_SETTINGS = {
     rateLimitBackoffMs: 120000,    // backoff after 429 (2 min)
     settingsDebounceMs: 3000,      // coalesce rapid settings saves before re-fetch
   },
-  localAdsb: { url: 'http://localhost:8080/data/aircraft.json', path: '', pollIntervalMs: 1000 },
+  localAdsb: { url: 'http://localhost:8080/data.json', path: '', pollIntervalMs: 1000 },
 
   // Optional display layers. Aircraft is the mission; the rest are OFF by
   // default. "stars" is a free local starfield (no network) so it's on.
@@ -140,16 +140,81 @@ function applyEnv(settings) {
 
 let current = null;
 
+// Validate a parsed settings value is a usable, non-empty object.
+function isUsableSettings(obj) {
+  return Boolean(obj) && typeof obj === 'object' && !Array.isArray(obj) && Object.keys(obj).length > 0;
+}
+
+// Write settings to disk SAFELY. Refuses to write an empty/invalid object (so a
+// bad save can never truncate settings.json to 0 bytes) and writes atomically
+// via a temp file + rename so a crash mid-write can't leave a corrupt/empty
+// file. Returns true on success.
+async function persist(settingsObj) {
+  if (!isUsableSettings(settingsObj)) {
+    console.warn('[settings] Refusing to write empty/invalid settings.json — keeping the existing file.');
+    return false;
+  }
+  let json;
+  try {
+    json = JSON.stringify(settingsObj, null, 2);
+  } catch (err) {
+    console.warn(`[settings] Could not serialize settings (${err.message}); not writing.`);
+    return false;
+  }
+  if (!json || json.trim().length < 2) {
+    console.warn('[settings] Serialized settings were empty; not writing.');
+    return false;
+  }
+  try {
+    if (!existsSync(DATA_DIR)) await mkdir(DATA_DIR, { recursive: true });
+    const tmp = `${SETTINGS_PATH}.tmp`;
+    await writeFile(tmp, json, 'utf8');
+    await rename(tmp, SETTINGS_PATH); // atomic on the same filesystem
+    return true;
+  } catch (err) {
+    console.warn(`[settings] Could not write settings.json: ${err.message}`);
+    return false;
+  }
+}
+
 export async function loadSettings() {
   let fileSettings = {};
+  let needsRecreate = false;
+
   try {
-    if (existsSync(SETTINGS_PATH)) {
-      fileSettings = JSON.parse(await readFile(SETTINGS_PATH, 'utf8'));
+    if (!existsSync(SETTINGS_PATH)) {
+      console.warn('[settings] settings.json not found — creating a fresh one from defaults.');
+      needsRecreate = true;
+    } else {
+      const raw = await readFile(SETTINGS_PATH, 'utf8');
+      if (!raw || !raw.trim()) {
+        // The exact symptom reported: a 0 KB settings.json. Recover + rewrite.
+        console.warn('[settings] settings.json is empty (0 bytes) — recovering with defaults and recreating the file.');
+        needsRecreate = true;
+      } else {
+        const parsed = JSON.parse(raw); // throws on invalid JSON → caught below
+        if (isUsableSettings(parsed)) {
+          fileSettings = parsed;
+        } else {
+          console.warn('[settings] settings.json did not contain a settings object — recovering with defaults and recreating the file.');
+          needsRecreate = true;
+        }
+      }
     }
   } catch (err) {
-    console.warn(`[settings] Could not read settings.json (${err.message}); using defaults.`);
+    console.warn(`[settings] settings.json is corrupted or unreadable (${err.message}) — recovering with defaults and recreating the file.`);
+    fileSettings = {};
+    needsRecreate = true;
   }
+
   current = applyEnv(fileSettings);
+
+  // Recreate a valid file from the recovered (defaults + env) settings so the
+  // next start reads clean config. Best-effort: a write failure is non-fatal.
+  if (needsRecreate) {
+    const ok = await persist(current);
+    if (ok) console.warn('[settings] Recreated a valid settings.json from defaults.');
+  }
   return current;
 }
 
@@ -159,26 +224,17 @@ export function getSettings() {
 
 // Save a partial update (deep-merged) back to disk. Returns the new settings.
 export async function saveSettings(partial) {
+  // Persist everything EXCEPT secrets that came from the environment — but we
+  // still keep whatever was explicitly saved via the API so file-based config
+  // works too. (Env always re-overrides on next load.)
   const merged = merge(getSettings(), partial || {});
   current = merged;
-  try {
-    if (!existsSync(DATA_DIR)) await mkdir(DATA_DIR, { recursive: true });
-    // Persist everything EXCEPT secrets that came from the environment — but we
-    // still keep whatever was explicitly saved via the API so file-based config
-    // works too. (Env always re-overrides on next load.)
-    await writeFile(SETTINGS_PATH, JSON.stringify(merged, null, 2), 'utf8');
-  } catch (err) {
-    console.warn(`[settings] Could not write settings.json: ${err.message}`);
-  }
+  await persist(merged); // safe-write: never truncates to an empty file
   return current;
 }
 
 export async function resetSettings() {
   current = applyEnv({});
-  try {
-    await writeFile(SETTINGS_PATH, JSON.stringify(DEFAULT_SETTINGS, null, 2), 'utf8');
-  } catch (err) {
-    console.warn(`[settings] Could not reset settings.json: ${err.message}`);
-  }
+  await persist(current);
   return current;
 }

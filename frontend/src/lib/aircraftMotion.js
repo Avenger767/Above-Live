@@ -18,6 +18,23 @@
 const NM_PER_DEG_LAT = 60;          // 1° latitude ≈ 60 nautical miles
 const DEG2RAD = Math.PI / 180;
 
+// Trail length bounds (seconds). The comet trail can be stretched well past the
+// old 60 s cap for visual testing / projector work, up to 600 s.
+export const TRAIL_MIN_SEC = 30;
+export const TRAIL_MAX_SEC = 600;
+
+/** Clamp a raw trailLength (seconds) to the supported range. */
+export function clampTrailSec(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return TRAIL_MIN_SEC;
+  return Math.max(TRAIL_MIN_SEC, Math.min(TRAIL_MAX_SEC, n));
+}
+
+/** Trail window in ms, derived from settings.trailLength (seconds), clamped. */
+export function trailWindowMsFromSettings(settings) {
+  return clampTrailSec(settings && settings.trailLength) * 1000;
+}
+
 // ---------------------------------------------------------------------------
 // Small geo helpers (mirrors backend/aircraft/aircraftMath.js, kept local so
 // the frontend has no backend import).
@@ -116,8 +133,9 @@ function motionCfg(settings) {
  */
 export function updateAircraftTracks(tracks, aircraft, now, settings) {
   const cfg = motionCfg(settings);
-  // Keep a little more history than the longest thing that reads it (trails).
-  const keepMs = 60_000;
+  // Keep a little more history than the longest thing that reads it (trails), so
+  // longer trail windows actually have fixes to draw. Bounded by TRAIL_MAX_SEC.
+  const keepMs = Math.max(60_000, trailWindowMsFromSettings(settings) + 5_000);
 
   for (const ac of aircraft || []) {
     if (ac == null || ac.id == null) continue;

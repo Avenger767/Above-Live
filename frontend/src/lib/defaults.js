@@ -26,7 +26,7 @@ export const DEFAULT_SETTINGS = {
   // Smooth-motion model (see frontend/src/lib/aircraftMotion.js).
   motion: { interpolate: true, renderDelayMs: 1150, maxExtrapolationSec: 4, staleSec: 20 },
   api: { baseUrl: 'https://api.airplanes.live/v2', apiKey: '', pollIntervalMs: 60000, rateLimitBackoffMs: 120000, settingsDebounceMs: 3000 },
-  localAdsb: { url: 'http://localhost:8080/data/aircraft.json', path: '', pollIntervalMs: 1000 },
+  localAdsb: { url: 'http://localhost:8080/data.json', path: '', pollIntervalMs: 1000 },
 
   // Optional display layers (aircraft + stars on; the rest off by default).
   layers: { aircraft: true, weather: false, iss: false, satellites: false, starlink: false, space: false, stars: true },

@@ -4,7 +4,7 @@
 // fine-tune offset, scale, rotation and flips against a known reference.
 
 import React from 'react';
-import { ceilingPreset } from '../lib/projectionMath.js';
+import { ceilingPreset, clampScale } from '../lib/projectionMath.js';
 
 export default function CalibrationPanel({ settings, onChange, testPattern, onToggleTest, onResetCalibration }) {
   const c = settings.calibration;
@@ -47,16 +47,23 @@ export default function CalibrationPanel({ settings, onChange, testPattern, onTo
       </label>
 
       <label className="field">
-        <span>Scale ({c.scale.toFixed(2)}×)</span>
+        <span>Scale: {Number(c.scale ?? 1).toFixed(2)}×</span>
         <input
           type="range"
-          min="0.3"
-          max="3"
-          step="0.01"
-          value={c.scale}
-          onChange={(e) => set({ scale: Number(e.target.value) })}
+          min="0.25"
+          max="10"
+          step="0.05"
+          value={c.scale ?? 1}
+          onChange={(e) => set({ scale: clampScale(Number(e.target.value)) })}
         />
       </label>
+      <div className="btn-row">
+        <button className="btn" onClick={() => set({ scale: 1 })}>Scale 1×</button>
+        <button className="btn" onClick={() => set({ scale: 2 })}>2×</button>
+        <button className="btn" onClick={() => set({ scale: 5 })}>5×</button>
+        <button className="btn" onClick={() => set({ scale: 10 })}>10×</button>
+      </div>
+      <p className="field-hint">Expands the radar/projection view up to 10× — aircraft data is unchanged.</p>
 
       <label className="field">
         <span>Rotation ({Math.round(c.rotation)}°)</span>

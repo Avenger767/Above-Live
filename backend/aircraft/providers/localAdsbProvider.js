@@ -43,6 +43,7 @@ export function createLocalAdsbProvider() {
   let lastFormat    = null;   // 'dump1090-array' | 'readsb-aircraft' | 'unknown'
   let lastSuccess   = 0;      // ts of last successful read
   let lastError     = null;   // last error message
+  let lastResolvedUrl = null; // URL actually used (may differ if we auto-found data.json)
 
   // Resolve which source to use from settings. URL takes priority over file.
   function resolveSource(s) {
@@ -91,6 +92,49 @@ export function createLocalAdsbProvider() {
     };
   }
 
+  // Fetch + JSON-parse one URL. Flags an HTML response (wrong endpoint, e.g. a
+  // directory listing or tar1090 page) with err.html so the caller can try the
+  // sibling "data.json" automatically.
+  async function fetchJsonUrl(url) {
+    const res = await fetch(url, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status} from ${url}`);
+    const ct = (res.headers.get('content-type') || '').toLowerCase();
+    const text = await res.text();
+    const looksHtml = ct.includes('text/html') || /^\s*</.test(text);
+    if (looksHtml) {
+      const err = new Error(`got HTML (not JSON) from ${url}`);
+      err.html = true;
+      throw err;
+    }
+    try {
+      return JSON.parse(text);
+    } catch {
+      const err = new Error(`invalid JSON from ${url}`);
+      err.html = true; // most likely pointed at the wrong endpoint
+      throw err;
+    }
+  }
+
+  // Derive a sibling ".../data.json" candidate from a URL that returned HTML.
+  // e.g. http://host:8080/ → http://host:8080/data.json
+  //      http://host:8080/tar1090/ → http://host:8080/tar1090/data.json
+  // Returns null when the URL already ends in data.json (nothing to try).
+  function dataJsonCandidate(url) {
+    try {
+      const u = new URL(url);
+      if (/\/data\.json$/i.test(u.pathname)) return null;
+      u.search = '';
+      u.hash = '';
+      u.pathname = u.pathname.replace(/\/[^/]*$/, '') + '/data.json';
+      return u.toString();
+    } catch {
+      return null;
+    }
+  }
+
   // Read + parse the raw feed from the resolved source.
   // Returns { list: preprocessedArray, format }.  Throws on any failure.
   async function readRaw(src) {
@@ -98,13 +142,22 @@ export function createLocalAdsbProvider() {
     if (src.type === 'file') {
       const text = await readFile(src.value, 'utf8');
       data = JSON.parse(text);
+      lastResolvedUrl = null;
     } else if (src.type === 'url') {
-      const res = await fetch(src.value, {
-        headers: { Accept: 'application/json' },
-        signal: AbortSignal.timeout(5000),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status} from ${src.value}`);
-      data = await res.json();
+      try {
+        data = await fetchJsonUrl(src.value);
+        lastResolvedUrl = src.value;
+      } catch (err) {
+        // If the configured URL served HTML, auto-detect the sibling data.json.
+        const candidate = err.html ? dataJsonCandidate(src.value) : null;
+        if (candidate) {
+          data = await fetchJsonUrl(candidate); // may throw — surfaced as-is
+          lastResolvedUrl = candidate;
+          console.warn(`[local_adsb] ${src.value} returned HTML — using ${candidate} instead`);
+        } else {
+          throw err;
+        }
+      }
     } else {
       throw new Error('LOCAL_ADSB not configured (set LOCAL_ADSB_URL or LOCAL_ADSB_PATH)');
     }
@@ -150,6 +203,7 @@ export function createLocalAdsbProvider() {
       configured:        src.type !== 'none',
       sourceType:        src.type, // 'url' | 'file' | 'none'
       source:            src.value || null,
+      resolvedSource:    lastResolvedUrl || src.value || null, // URL actually used
       rawAircraftCount:  lastRawCount,   // items received before normalizer filtering
       aircraftCount:     cache ? cache.length : 0,
       detectedFormat:    lastFormat,
@@ -186,6 +240,7 @@ export function createLocalAdsbProvider() {
         configured: true,
         sourceType: src.type,
         source: src.value,
+        resolvedSource: lastResolvedUrl || src.value,
         rawCount: lastRawCount,
         aircraftCount: aircraft.length,
         normalizedCount: aircraft.length,
@@ -202,6 +257,7 @@ export function createLocalAdsbProvider() {
         configured: true,
         sourceType: src.type,
         source: src.value,
+        resolvedSource: lastResolvedUrl || src.value,
         rawCount: lastRawCount,
         aircraftCount: cache ? cache.length : 0,
         normalizedCount: cache ? cache.length : 0,

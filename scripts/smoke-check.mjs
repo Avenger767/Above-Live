@@ -13,7 +13,7 @@
 import { spawn } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
@@ -768,6 +768,119 @@ async function starlinkBlockedTests() {
 }
 
 // ---------------------------------------------------------------------------
+// Part J — settings recovery + calibration scale + trail length (no network)
+// ---------------------------------------------------------------------------
+async function recoveryAndCalibrationTests() {
+  console.log('\nPart J — settings recovery, calibration scale, trails (no network)');
+
+  // --- Defaults: LOCAL_ADSB url now points at data.json ---
+  const store = await import('../backend/settings/settingsStore.js');
+  check(
+    store.DEFAULT_SETTINGS.localAdsb.url === 'http://localhost:8080/data.json',
+    `defaults: LOCAL_ADSB url is data.json (got ${store.DEFAULT_SETTINGS.localAdsb.url})`
+  );
+
+  // --- Empty/corrupt settings.json recovers safely + recreates a valid file ---
+  const SETTINGS_PATH = join(BACKEND, 'data', 'settings.json');
+  const backup = await readFile(SETTINGS_PATH, 'utf8'); // restore at the end
+  try {
+    // 1) Empty (0-byte) file → recover with defaults + recreate a valid file.
+    await writeFile(SETTINGS_PATH, '', 'utf8');
+    const recovered = await store.loadSettings();
+    check(recovered && recovered.provider != null && recovered.localAdsb?.url != null,
+      'recovery: empty settings.json recovers a usable settings object');
+    check(recovered.localAdsb.url === 'http://localhost:8080/data.json',
+      'recovery: recovered settings use the data.json default URL');
+    const afterEmpty = await readFile(SETTINGS_PATH, 'utf8');
+    check(afterEmpty.trim().length > 0, 'recovery: empty file was recreated (no longer 0 bytes)');
+    check(JSON.parse(afterEmpty).provider != null, 'recovery: recreated file is valid JSON');
+
+    // 2) Corrupt JSON → same safe recovery.
+    await writeFile(SETTINGS_PATH, '{ this is : not json,,', 'utf8');
+    const recovered2 = await store.loadSettings();
+    check(recovered2 && recovered2.provider != null, 'recovery: corrupt JSON recovers a usable settings object');
+    check(JSON.parse(await readFile(SETTINGS_PATH, 'utf8')).provider != null,
+      'recovery: corrupt file was recreated as valid JSON');
+
+    // 3) saveSettings never truncates the file to empty.
+    await store.saveSettings({ trailLength: 240, calibration: { scale: 7.5 } });
+    const afterSave = await readFile(SETTINGS_PATH, 'utf8');
+    check(afterSave.trim().length > 0, 'save: settings.json is not empty after a save');
+    const parsed = JSON.parse(afterSave);
+    check(parsed.trailLength === 240, `save: trailLength persisted (got ${parsed.trailLength})`);
+    check(parsed.calibration.scale === 7.5, `save: calibration.scale persisted (got ${parsed.calibration.scale})`);
+  } finally {
+    await writeFile(SETTINGS_PATH, backup, 'utf8'); // always restore original
+  }
+
+  // --- Calibration scale: clamp + accept up to 10x ---
+  const pm = await import('../frontend/src/lib/projectionMath.js');
+  check(pm.SCALE_MAX === 10 && pm.SCALE_MIN === 0.25, 'scale: bounds are 0.25x – 10x');
+  check(pm.clampScale(10) === 10, 'scale: 10x accepted');
+  check(pm.clampScale(2.35) === 2.35, 'scale: mid value (2.35x) accepted');
+  check(pm.clampScale(25) === 10, 'scale: above-max clamped to 10x');
+  check(pm.clampScale(-5) === 0.25, 'scale: below-min clamped to 0.25x');
+  check(pm.clampScale('nonsense') === 1, 'scale: non-finite falls back to 1x');
+  check(pm.getCalibration({ calibration: { scale: 50 } }).scale === 10,
+    'scale: getCalibration clamps an out-of-range scale');
+  check(pm.getCalibration({ calibration: { scale: 4.2 } }).scale === 4.2,
+    'scale: getCalibration preserves a valid scale');
+
+  // --- Trail length: clamp + window derivation ---
+  const motion = await import('../frontend/src/lib/aircraftMotion.js');
+  check(motion.TRAIL_MIN_SEC === 30 && motion.TRAIL_MAX_SEC === 600, 'trails: bounds are 30s – 600s');
+  check(motion.clampTrailSec(600) === 600, 'trails: 600s accepted');
+  check(motion.clampTrailSec(9999) === 600, 'trails: above-max clamped to 600s');
+  check(motion.clampTrailSec(5) === 30, 'trails: below-min clamped to 30s');
+  check(motion.clampTrailSec('x') === 30, 'trails: non-finite falls back to 30s');
+  check(motion.trailWindowMsFromSettings({ trailLength: 300 }) === 300000, 'trails: 300s → 300000ms window');
+
+  // --- Longer trails keep older history; renderer sampling still works ---
+  // 3 fixes; oldest is 200s old. With a 300s trail the oldest is retained; with
+  // a 30s trail it is trimmed (but always ≥2 points kept for interpolation).
+  const mkFix = (lon) => ({ id: 'T', lat: 0, lon, heading: 90, speed: 400 });
+  const longTracks = new Map();
+  motion.updateAircraftTracks(longTracks, [mkFix(0)], 0,      { trailLength: 300 });
+  motion.updateAircraftTracks(longTracks, [mkFix(1)], 1000,   { trailLength: 300 });
+  motion.updateAircraftTracks(longTracks, [mkFix(2)], 200000, { trailLength: 300 });
+  check(longTracks.get('T').history.length === 3, 'trails: long window retains old history (3 fixes)');
+
+  const shortTracks = new Map();
+  motion.updateAircraftTracks(shortTracks, [mkFix(0)], 0,      { trailLength: 30 });
+  motion.updateAircraftTracks(shortTracks, [mkFix(1)], 1000,   { trailLength: 30 });
+  motion.updateAircraftTracks(shortTracks, [mkFix(2)], 200000, { trailLength: 30 });
+  check(shortTracks.get('T').history.length === 2, 'trails: short window trims old history (down to 2)');
+
+  // Sampling still returns a finite position for a long-window track.
+  const sample = motion.sampleAircraftTrack(longTracks.get('T'), 500, { trailLength: 300 });
+  check(sample && Number.isFinite(sample.lon), 'trails: sampling a long-window track returns a finite position');
+
+  // --- LOCAL_ADSB auto-detects data.json when the URL returns HTML ---
+  const savedFetch = global.fetch;
+  global.fetch = async (url) => {
+    const u = String(url);
+    if (/\/data\.json$/.test(u)) {
+      return {
+        ok: true, status: 200,
+        headers: { get: () => 'application/json' },
+        text: async () => JSON.stringify([{ hex: 'abc123', flight: 'TST1', lat: 32.7, lon: -96.8, altitude: 10000, track: 90, speed: 300 }]),
+      };
+    }
+    return { ok: true, status: 200, headers: { get: () => 'text/html' }, text: async () => '<html>directory listing</html>' };
+  };
+  try {
+    const { createLocalAdsbProvider } = await import('../backend/aircraft/providers/localAdsbProvider.js');
+    const p = createLocalAdsbProvider();
+    const r = await p.test({ home: { lat: 32.7767, lon: -96.797 }, localAdsb: { url: 'http://localhost:8080/' } });
+    check(r.success === true, 'LOCAL_ADSB html-fallback: succeeds via sibling data.json');
+    check(/\/data\.json$/.test(r.resolvedSource || ''), `LOCAL_ADSB html-fallback: resolvedSource is data.json (got ${r.resolvedSource})`);
+    check(r.aircraftCount === 1, `LOCAL_ADSB html-fallback: parsed aircraft from data.json (got ${r.aircraftCount})`);
+  } finally {
+    global.fetch = savedFetch;
+  }
+}
+
+// ---------------------------------------------------------------------------
 console.log(`Above Live — smoke check (port ${PORT})`);
 await integrationTests();
 await unitTests();
@@ -778,5 +891,6 @@ await invalidationRelevanceTests();
 await localAdsbFormatTests();
 await spaceLayerTests();
 await starlinkBlockedTests();
+await recoveryAndCalibrationTests();
 console.log(failed ? '\nSMOKE CHECK FAILED' : '\nSMOKE CHECK PASSED');
 process.exit(failed ? 1 : 0);

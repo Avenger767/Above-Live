@@ -109,6 +109,22 @@ export default function ControlPanel({ settings, onChange, onToggleFullscreen, o
         <input type="checkbox" checked={d.trails} onChange={(e) => setDisplay({ trails: e.target.checked })} />
       </label>
 
+      {d.trails && (
+        <>
+          <label className="field">
+            <span>Trail length ({settings.trailLength ?? 30}s)</span>
+            <input
+              type="range" min="30" max="600" step="10"
+              value={settings.trailLength ?? 30}
+              onChange={(e) => onChange({ trailLength: Number(e.target.value) })}
+            />
+          </label>
+          <p className="field-hint">
+            Longer trails are thinned to stay light on a Raspberry Pi. 30s short · 300s default max · 600s for testing.
+          </p>
+        </>
+      )}
+
       <label className="field toggle">
         <span>Altitude colour</span>
         <input

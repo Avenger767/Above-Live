@@ -43,7 +43,7 @@
     "settingsDebounceMs": 3000
   },
   "localAdsb": {
-    "url": "http://localhost:8080/data/aircraft.json",
+    "url": "http://localhost:8080/data.json",
     "path": "",
     "pollIntervalMs": 1000
   },

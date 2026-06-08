@@ -51,7 +51,13 @@ import {
   renderDelayMs,
   effectiveMotionSettings,
   deadReckonBack,
+  trailWindowMsFromSettings,
 } from '../lib/aircraftMotion.js';
+
+// Max trail segments drawn per aircraft. Longer trail windows are thinned down
+// to this many points so a 600 s trail costs the same to draw as a short one
+// (Raspberry Pi friendly).
+const MAX_TRAIL_SEGMENTS = 48;
 
 const WARN_RGB = [255, 90, 71]; // emergency highlight colour
 
@@ -308,6 +314,7 @@ function draw(ctx, st, props, dt, nowMs) {
   const showTrails = settings.display.trails !== false;
   const renderTime = now - renderDelayMs(effSettings);
   const headingK = Math.min(1, dt * 5); // frame-rate-aware heading ease
+  const trailWindowMs = trailWindowMsFromSettings(settings); // clamped 30–600 s
 
   // Build the visible set (skipped entirely when aircraft layer is off).
   const visible = [];
@@ -357,8 +364,6 @@ function draw(ctx, st, props, dt, nowMs) {
     // fall back to a short PREDICTED trail behind the aircraft, dead-reckoned from
     // its heading + speed, so the comet tail never vanishes between fetches.
     if (showTrails) {
-      const trailWindowMs = Math.max(5, Math.min(60, settings.trailLength || 30)) * 1000;
-      const MAX_TRAIL_SEGMENTS = 24; // cap work per aircraft (Pi-friendly)
       ctx.save();
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
@@ -389,7 +394,15 @@ function draw(ctx, st, props, dt, nowMs) {
 
         pts.push({ p: v.p, age: 0 }); // head = interpolated/extrapolated position
         if (pts.length < 2) continue;
-        if (pts.length > MAX_TRAIL_SEGMENTS + 1) pts = pts.slice(-(MAX_TRAIL_SEGMENTS + 1));
+        // Thin uniformly (not by truncation) so the FULL time span is preserved
+        // for long trails while the drawn segment count stays bounded.
+        if (pts.length > MAX_TRAIL_SEGMENTS + 1) {
+          const step = pts.length / (MAX_TRAIL_SEGMENTS + 1);
+          const thinned = [];
+          for (let i = 0; i < MAX_TRAIL_SEGMENTS; i++) thinned.push(pts[Math.floor(i * step)]);
+          thinned.push(pts[pts.length - 1]); // always keep the head
+          pts = thinned;
+        }
 
         for (let i = 1; i < pts.length; i++) {
           const a = pts[i - 1];
@@ -440,7 +453,12 @@ function draw(ctx, st, props, dt, nowMs) {
   // adds per-frame React churn on a Pi). Reports zero when aircraft layer is off.
   if (props.onStats && (!st.lastStatsAt || nowMs - st.lastStatsAt > 1000)) {
     st.lastStatsAt = nowMs;
-    props.onStats({ trackCount: st.tracks.size, renderedCount: visible.length });
+    props.onStats({
+      trackCount: st.tracks.size,
+      renderedCount: visible.length,
+      trailWindowSec: Math.round(trailWindowMs / 1000),
+      trailSegmentCap: MAX_TRAIL_SEGMENTS,
+    });
   }
 
   // --- Optional layers (weather wash + wind, orbital objects, celestial) ---

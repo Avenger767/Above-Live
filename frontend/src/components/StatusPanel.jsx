@@ -134,6 +134,13 @@ export default function StatusPanel({ status, aircraftCount, connectionMode, set
         <span className="status-val">{rs.trackCount ?? '—'} ({rs.renderedCount ?? '—'} rendered)</span>
       </div>
       <div className="status-row">
+        <span className="status-key">Trail window</span>
+        <span className="status-val">
+          {rs.trailWindowSec != null ? `${rs.trailWindowSec}s` : '—'}
+          {rs.trailSegmentCap != null ? ` · ${rs.trailSegmentCap} seg cap` : ''}
+        </span>
+      </div>
+      <div className="status-row">
         <span className="status-key">Last save</span>
         <span className="status-val">{timeAgo(s.lastSettingsSaveAt)}</span>
       </div>
@@ -212,6 +219,14 @@ export default function StatusPanel({ status, aircraftCount, connectionMode, set
             <span className="status-key">ADS-B source</span>
             <span className="status-val">{local.sourceType === 'none' ? 'not set' : local.sourceType}</span>
           </div>
+          {(local.resolvedSource || local.source) && (
+            <div className="status-row">
+              <span className="status-key">ADS-B URL</span>
+              <span className="status-val" style={{ maxWidth: '60%', textAlign: 'right', wordBreak: 'break-all' }}>
+                {local.resolvedSource || local.source}
+              </span>
+            </div>
+          )}
           <div className="status-row">
             <span className="status-key">Format</span>
             <span className="status-val">{local.detectedFormat || '—'}</span>
