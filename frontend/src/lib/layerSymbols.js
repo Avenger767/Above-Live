@@ -130,10 +130,15 @@ function drawSunAt(ctx, color, alpha) {
   ctx.restore();
 }
 
-function drawMoonAt(ctx, color, alpha) {
+// Phase-aware Moon. opts.phase: 0=new, 0.25=first quarter, 0.5=full, 0.75=last quarter.
+function drawMoonAt(ctx, color, alpha, opts) {
   const r = 8;
+  const phase = (opts && typeof opts.phase === 'number') ? opts.phase : 0.35;
+  const illum = (1 - Math.cos(2 * Math.PI * phase)) / 2; // 0=new, 1=full
+
   ctx.save();
   ctx.globalAlpha = alpha;
+
   // Soft atmospheric halo
   const halo = ctx.createRadialGradient(0, 0, 0, 0, 0, r * 2.2);
   halo.addColorStop(0, withAlpha(color, 0.20));
@@ -142,20 +147,57 @@ function drawMoonAt(ctx, color, alpha) {
   ctx.beginPath();
   ctx.arc(0, 0, r * 2.2, 0, Math.PI * 2);
   ctx.fill();
+
+  if (illum < 0.04) {
+    // New moon: very dim disc only
+    ctx.globalAlpha = alpha * 0.12;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+    return;
+  }
+
   // Full lit disc
   ctx.fillStyle = color;
   ctx.beginPath();
   ctx.arc(0, 0, r, 0, Math.PI * 2);
   ctx.fill();
-  // True crescent: clip to disc, then paint offset shadow circle over it.
-  // Shadow offset right → crescent illuminated on the left.
+
+  if (illum > 0.96) {
+    // Full moon: nothing more to do
+    ctx.restore();
+    return;
+  }
+
+  // Draw dark side clipped to disc using bezier terminator technique.
+  // kx: terminator ellipse x-scale (0=line/quarter, ±1=full circle/new+full).
+  // waxing (phase<0.5): dark on LEFT, kx = 1-2*illum (shrinks right as moon fills).
+  // waning (phase>0.5): dark on RIGHT, kx = 2*illum-1 (shrinks left as moon fades).
+  const waxing = phase <= 0.5;
+  const kx = waxing ? (1 - 2 * illum) : (2 * illum - 1);
+  const cpX = kx * r * 0.5523; // bezier magic constant for ellipse approximation
+  const cpY = r * 0.5523;
+
   ctx.save();
   ctx.beginPath();
   ctx.arc(0, 0, r, 0, Math.PI * 2);
   ctx.clip();
-  ctx.fillStyle = `rgba(0,5,30,${0.90 * alpha})`;
+  ctx.fillStyle = `rgba(0,5,30,${0.92 * alpha})`;
   ctx.beginPath();
-  ctx.arc(r * 0.48, 0, r * 0.96, 0, Math.PI * 2);
+  if (waxing) {
+    // Dark on left — arc goes CW (through left side): bottom → top
+    ctx.arc(0, 0, r, Math.PI / 2, -Math.PI / 2, false);
+    // Terminator: bezier from top (0,-r) to bottom (0,r) curving right when kx>0
+    ctx.bezierCurveTo(cpX, -cpY, cpX, cpY, 0, r);
+  } else {
+    // Dark on right — arc goes CCW (through right side): bottom → top
+    ctx.arc(0, 0, r, Math.PI / 2, -Math.PI / 2, true);
+    // Terminator: bezier from top to bottom curving left when kx>0
+    ctx.bezierCurveTo(-cpX, -cpY, -cpX, cpY, 0, r);
+  }
+  ctx.closePath();
   ctx.fill();
   ctx.restore();
   ctx.restore();
@@ -333,11 +375,12 @@ function drawPlanetDotAt(ctx, color, alpha) {
 
 // Dispatcher: draws the correct glyph for each solar system body.
 // x, y are absolute canvas coordinates.
-export function drawSpaceBody(ctx, x, y, name, kind, color, alpha) {
+// opts: optional per-body data (e.g. opts.phase for the Moon).
+export function drawSpaceBody(ctx, x, y, name, kind, color, alpha, opts) {
   ctx.save();
   ctx.translate(x, y);
   if (kind === 'sun') drawSunAt(ctx, color, alpha);
-  else if (kind === 'moon') drawMoonAt(ctx, color, alpha);
+  else if (kind === 'moon') drawMoonAt(ctx, color, alpha, opts);
   else if (name === 'Venus') drawVenusAt(ctx, color, alpha);
   else if (name === 'Mars') drawMarsAt(ctx, color, alpha);
   else if (name === 'Jupiter') drawJupiterAt(ctx, color, alpha);

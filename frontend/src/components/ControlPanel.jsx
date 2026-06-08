@@ -2,7 +2,7 @@
 // Display + data controls. Edits are pushed up to App via onChange (which saves
 // to the backend). Kept deliberately simple: native inputs styled by CSS.
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { THEMES, THEME_KEYS } from '../lib/themes.js';
 import {
   DISPLAY_MODES,
@@ -10,6 +10,7 @@ import {
   RADAR_OVERLAY_ALL_ON,
   RADAR_OVERLAY_CLEAN_SKY,
 } from '../lib/displayModes.js';
+import { DEFAULT_SETTINGS } from '../lib/defaults.js';
 
 const PROVIDERS = ['MOCK', 'API', 'LOCAL_ADSB'];
 
@@ -18,7 +19,7 @@ const LAYER_TOGGLES = [
   { key: 'iss', label: 'ISS' },
   { key: 'satellites', label: 'Satellites' },
   { key: 'starlink', label: 'Starlink' },
-  { key: 'space', label: 'Planets' },
+  { key: 'space', label: 'Planets / Moon / Sun' },
   { key: 'weather', label: 'Weather' },
 ];
 
@@ -32,12 +33,22 @@ const BRIGHTNESS_ELEMENTS = [
   { key: 'satellites', label: 'Satellites' },
 ];
 
-export default function ControlPanel({ settings, onChange, onToggleFullscreen, onReset, onOpenCalibration }) {
+// Validate lat/lon inputs. Returns an error string or null.
+function validateHome(lat, lon) {
+  const latN = Number(lat);
+  const lonN = Number(lon);
+  if (!Number.isFinite(latN) || latN < -90 || latN > 90)
+    return 'Latitude must be a number between -90 and 90';
+  if (!Number.isFinite(lonN) || lonN < -180 || lonN > 180)
+    return 'Longitude must be a number between -180 and 180';
+  return null;
+}
+
+export default function ControlPanel({ settings, onChange, onHomeChange, onToggleFullscreen, onReset, onOpenCalibration }) {
   const d = settings.display;
   const layers = settings.layers || {};
   const bm = d.brightnessMap || {};
   const motion = settings.motion || {};
-
   const radar = d.radar || {};
 
   const setDisplay = (patch) => onChange({ display: { ...d, ...patch } });
@@ -47,6 +58,70 @@ export default function ControlPanel({ settings, onChange, onToggleFullscreen, o
   const setMotion = (patch) => onChange({ motion: { ...motion, ...patch } });
   const setBrightnessMap = (key, val) =>
     setDisplay({ brightnessMap: { ...bm, [key]: val } });
+
+  // ── Home location local edit state ──────────────────────────────────────────
+  const [homeName, setHomeName] = useState(settings.home?.name ?? '');
+  const [homeLat,  setHomeLat]  = useState(String(settings.home?.lat ?? ''));
+  const [homeLon,  setHomeLon]  = useState(String(settings.home?.lon ?? ''));
+  const [homeError, setHomeError] = useState(null);
+  const [geoStatus, setGeoStatus] = useState(null); // 'locating' | 'ok' | 'error'
+
+  // Sync the input fields when settings.home changes externally (e.g., reset).
+  useEffect(() => {
+    setHomeName(settings.home?.name ?? '');
+    setHomeLat(String(settings.home?.lat ?? ''));
+    setHomeLon(String(settings.home?.lon ?? ''));
+    setHomeError(null);
+  }, [settings.home?.lat, settings.home?.lon, settings.home?.name]);
+
+  function applyHome() {
+    const err = validateHome(homeLat, homeLon);
+    if (err) { setHomeError(err); return; }
+    setHomeError(null);
+    const homeObj = {
+      name: homeName.trim() || 'Home',
+      lat: Math.round(Number(homeLat) * 1e6) / 1e6,
+      lon: Math.round(Number(homeLon) * 1e6) / 1e6,
+    };
+    if (onHomeChange) onHomeChange(homeObj, 'settings');
+    else onChange({ home: homeObj });
+  }
+
+  function resetHome() {
+    const def = DEFAULT_SETTINGS.home;
+    setHomeName(def.name);
+    setHomeLat(String(def.lat));
+    setHomeLon(String(def.lon));
+    setHomeError(null);
+    if (onHomeChange) onHomeChange({ ...def }, 'default');
+    else onChange({ home: { ...def } });
+  }
+
+  function useMyLocation() {
+    if (!navigator.geolocation) {
+      setHomeError('Geolocation is not supported by this browser.');
+      return;
+    }
+    setGeoStatus('locating');
+    setHomeError(null);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const lat = Math.round(pos.coords.latitude  * 1e6) / 1e6;
+        const lon = Math.round(pos.coords.longitude * 1e6) / 1e6;
+        const homeObj = { name: homeName.trim() || 'My location', lat, lon };
+        setHomeLat(String(lat));
+        setHomeLon(String(lon));
+        setGeoStatus('ok');
+        if (onHomeChange) onHomeChange(homeObj, 'browser');
+        else onChange({ home: homeObj });
+      },
+      (err) => {
+        setGeoStatus('error');
+        setHomeError(`Location denied or unavailable: ${err.message}`);
+      },
+      { timeout: 10000, maximumAge: 60000 }
+    );
+  }
 
   return (
     <div className="panel-section">
@@ -70,7 +145,69 @@ export default function ControlPanel({ settings, onChange, onToggleFullscreen, o
         </select>
       </label>
 
+      {/* ── Home location ──────────────────────────────────────────────────── */}
+      <h3>Home Location</h3>
+      <p className="field-hint">
+        Sets the map center and range origin. Aircraft, satellites, planets and
+        the Moon all use this position. Changes persist after restart.
+      </p>
+
+      <label className="field">
+        <span>Label</span>
+        <input
+          type="text"
+          value={homeName}
+          maxLength={48}
+          placeholder="e.g. Home, Office, Backyard"
+          onChange={(e) => setHomeName(e.target.value)}
+        />
+      </label>
+
+      <label className="field">
+        <span>Latitude</span>
+        <input
+          type="text"
+          inputMode="decimal"
+          value={homeLat}
+          placeholder="-90 to 90"
+          onChange={(e) => setHomeLat(e.target.value)}
+          onBlur={applyHome}
+        />
+      </label>
+
+      <label className="field">
+        <span>Longitude</span>
+        <input
+          type="text"
+          inputMode="decimal"
+          value={homeLon}
+          placeholder="-180 to 180"
+          onChange={(e) => setHomeLon(e.target.value)}
+          onBlur={applyHome}
+        />
+      </label>
+
+      {homeError && <p className="field-error">{homeError}</p>}
+      {geoStatus === 'locating' && <p className="field-hint">Locating…</p>}
+      {geoStatus === 'ok' && <p className="field-hint" style={{ color: '#4caf97' }}>Location applied.</p>}
+
+      <div className="btn-row">
+        <button className="btn" onClick={applyHome}>Apply</button>
+        <button className="btn" onClick={resetHome}>Reset default</button>
+        <button className="btn" onClick={useMyLocation}>Use my location</button>
+      </div>
+
       <h3>Display</h3>
+
+      <div className="btn-row">
+        <button
+          className="btn"
+          onClick={() => onChange({ display: { ...d, displayMode: 'projector', radar: { ...RADAR_OVERLAY_CLEAN_SKY } } })}
+        >
+          Projector clean sky
+        </button>
+      </div>
+      <p className="field-hint">Sets projector mode + hides all radar overlay elements.</p>
 
       <label className="field">
         <span>Mode</span>
@@ -198,6 +335,16 @@ export default function ControlPanel({ settings, onChange, onToggleFullscreen, o
           <option value="all">All objects</option>
         </select>
       </label>
+
+      <label className="field toggle">
+        <span>Moon path arc</span>
+        <input
+          type="checkbox"
+          checked={d.showMoonPath !== false}
+          onChange={(e) => setDisplay({ showMoonPath: e.target.checked })}
+        />
+      </label>
+      <p className="field-hint">Shows the Moon's daily arc across the sky (when Planets layer is on).</p>
 
       <h3>Radar Overlay</h3>
       <p className="field-hint">

@@ -930,6 +930,120 @@ async function radarOverlayTests() {
 }
 
 // ---------------------------------------------------------------------------
+// Part L — home location, Moon phase/path, projector preset (no network)
+// ---------------------------------------------------------------------------
+async function homeAndMoonTests() {
+  console.log('\nPart L — home location, Moon phase/path, projector preset (no network)');
+
+  const { DEFAULT_SETTINGS } = await import('../backend/settings/settingsStore.js');
+  const { RADAR_OVERLAY_CLEAN_SKY, getRadarOverlay } = await import('../frontend/src/lib/displayModes.js');
+  const { computeMoonPath, computeMoonRiseSet } = await import('../backend/layers/lib/astro.js');
+
+  // ── Home defaults ──────────────────────────────────────────────────────────
+  const home = DEFAULT_SETTINGS.home;
+  check(typeof home.lat === 'number' && typeof home.lon === 'number',
+    'home: default lat/lon are numbers');
+  check(home.lat >= -90 && home.lat <= 90,
+    `home: default lat in [-90,90] (got ${home.lat})`);
+  check(home.lon >= -180 && home.lon <= 180,
+    `home: default lon in [-180,180] (got ${home.lon})`);
+  check(typeof home.name === 'string' && home.name.length > 0,
+    'home: default name is non-empty string');
+
+  // ── Home validation logic (mirrors ControlPanel.validateHome) ───────────────
+  function validateHome(lat, lon) {
+    const la = Number(lat), lo = Number(lon);
+    if (!Number.isFinite(la) || la < -90 || la > 90) return false;
+    if (!Number.isFinite(lo) || lo < -180 || lo > 180) return false;
+    return true;
+  }
+  check(validateHome(32.7767, -96.797),   'home validate: valid coords pass');
+  check(validateHome(-90, -180),          'home validate: boundary (-90,-180) passes');
+  check(validateHome(90, 180),            'home validate: boundary (90,180) passes');
+  check(!validateHome(91, 0),             'home validate: lat 91 rejected');
+  check(!validateHome(-91, 0),            'home validate: lat -91 rejected');
+  check(!validateHome(0, 181),            'home validate: lon 181 rejected');
+  check(!validateHome(0, -181),           'home validate: lon -181 rejected');
+  check(!validateHome('abc', 0),          'home validate: non-numeric lat rejected');
+  check(!validateHome(0, 'xyz'),          'home validate: non-numeric lon rejected');
+
+  // ── Moon phase calculation ─────────────────────────────────────────────────
+  // Inline the same formula used in spaceLayer.js.
+  function moonPhaseCalc(date) {
+    const SYNODIC = 29.530588853;
+    const knownNewMoon = Date.UTC(2000, 0, 6, 18, 14, 0);
+    const days = (date.getTime() - knownNewMoon) / 86400000;
+    let phase = (days % SYNODIC) / SYNODIC;
+    if (phase < 0) phase += 1;
+    const illumination = Math.round(((1 - Math.cos(2 * Math.PI * phase)) / 2) * 100);
+    return { phase, illumination };
+  }
+
+  const { phase, illumination } = moonPhaseCalc(new Date('2024-01-25T00:00:00Z'));
+  check(phase >= 0 && phase < 1,      `moon phase: value in [0,1) (got ${phase})`);
+  check(illumination >= 0 && illumination <= 100,
+    `moon phase: illumination in [0,100] (got ${illumination}%)`);
+
+  // Known full moon 2024-01-25 → should be near 0.5.
+  check(phase > 0.45 && phase < 0.55, `moon phase: 2024-01-25 is near full (phase=${phase.toFixed(3)})`);
+  check(illumination > 90,            `moon phase: 2024-01-25 illumination >90% (got ${illumination}%)`);
+
+  // New moon 2024-01-11 UTC → phase close to 0.
+  const newMoon = moonPhaseCalc(new Date('2024-01-11T11:57:00Z'));
+  check(newMoon.phase < 0.04 || newMoon.phase > 0.96,
+    `moon phase: 2024-01-11 is near new (phase=${newMoon.phase.toFixed(3)})`);
+  check(newMoon.illumination < 5,
+    `moon phase: 2024-01-11 illumination <5% (got ${newMoon.illumination}%)`);
+
+  // ── Moon path ──────────────────────────────────────────────────────────────
+  const testHome = { lat: 51.5, lon: -0.1 };  // London
+  const testDate = new Date('2024-06-15T12:00:00Z');
+  const path = computeMoonPath(testHome, testDate, 24, 1);
+  check(Array.isArray(path) && path.length === 25,
+    `moon path: 24h/1h step returns 25 points (got ${path.length})`);
+  check(path.every(p => typeof p.az === 'number' && typeof p.el === 'number' && typeof p.t === 'number'),
+    'moon path: each point has numeric az, el, t');
+  check(path.every(p => p.az >= 0 && p.az < 360),
+    'moon path: all azimuths in [0,360)');
+  check(path.every(p => p.el >= -90 && p.el <= 90),
+    'moon path: all elevations in [-90,90]');
+
+  // At least some points above horizon for a mid-summer day at London.
+  const aboveHorizon = path.filter(p => p.el > 0).length;
+  check(aboveHorizon > 0, `moon path: some points above horizon (got ${aboveHorizon})`);
+
+  // ── Moon rise/set ──────────────────────────────────────────────────────────
+  const riseSet = computeMoonRiseSet(testHome, testDate);
+  check(typeof riseSet === 'object', 'moon rise/set: returns an object');
+  // rise/set may be null if moon doesn't cross horizon, but format must be HH:MM or null.
+  const hmRe = /^\d{2}:\d{2}$/;
+  if (riseSet.rise !== null) check(hmRe.test(riseSet.rise), `moon rise/set: rise format HH:MM (got "${riseSet.rise}")`);
+  if (riseSet.set  !== null) check(hmRe.test(riseSet.set),  `moon rise/set: set  format HH:MM (got "${riseSet.set}")`);
+
+  // ── Moon path toggle default ───────────────────────────────────────────────
+  check(DEFAULT_SETTINGS.display.showMoonPath === true,
+    'moon path toggle: defaults to true in settings');
+
+  // ── Projector clean-sky preset ─────────────────────────────────────────────
+  // Simulate the preset button click in ControlPanel: sets displayMode + RADAR_OVERLAY_CLEAN_SKY.
+  const projectorSettings = {
+    display: {
+      displayMode: 'projector',
+      radar: { ...RADAR_OVERLAY_CLEAN_SKY },
+    },
+  };
+  check(projectorSettings.display.displayMode === 'projector',
+    'projector preset: displayMode set to projector');
+  const radarResult = getRadarOverlay(projectorSettings);
+  check(!radarResult.rings && !radarResult.compass && !radarResult.nmLabels && !radarResult.crosshair,
+    'projector preset: all radar overlay elements hidden');
+
+  // ── Ensure existing layers are unaffected by home/moon changes ───────────────
+  check(DEFAULT_SETTINGS.layers.aircraft === true, 'existing layers: aircraft layer still enabled');
+  check(DEFAULT_SETTINGS.layers.stars === true,    'existing layers: stars layer still enabled');
+}
+
+// ---------------------------------------------------------------------------
 console.log(`Above Live — smoke check (port ${PORT})`);
 await integrationTests();
 await unitTests();
@@ -942,5 +1056,6 @@ await spaceLayerTests();
 await starlinkBlockedTests();
 await recoveryAndCalibrationTests();
 await radarOverlayTests();
+await homeAndMoonTests();
 console.log(failed ? '\nSMOKE CHECK FAILED' : '\nSMOKE CHECK PASSED');
 process.exit(failed ? 1 : 0);

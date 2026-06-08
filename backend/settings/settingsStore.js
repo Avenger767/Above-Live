@@ -35,6 +35,8 @@ export const DEFAULT_SETTINGS = {
     glyphDebug: false,
     // Space object label visibility: 'off' | 'major' (Sun/Moon/ISS) | 'all'
     spaceLabels: 'major',
+    // Show Moon's daily arc across the sky dome (when space layer is enabled).
+    showMoonPath: true,
     // Radar/compass overlay visibility. Each element can be hidden independently
     // for a clean live-sky / projector look; object layers are unaffected.
     radar: { rings: true, compass: true, nmLabels: true, crosshair: true },

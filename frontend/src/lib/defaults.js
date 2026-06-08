@@ -20,6 +20,7 @@ export const DEFAULT_SETTINGS = {
     highlightEmergency: true,   // subtle 7500/7600/7700 highlight
     glyphDebug: false,          // show typeCode + glyph class under each callsign
     spaceLabels: 'major',       // 'off' | 'major' (Sun/Moon/ISS) | 'all'
+    showMoonPath: true,         // show Moon's daily arc across the sky dome
     // Radar/compass overlay visibility (object layers are unaffected). Turn
     // these off for a clean live-sky / projector look.
     radar: { rings: true, compass: true, nmLabels: true, crosshair: true },

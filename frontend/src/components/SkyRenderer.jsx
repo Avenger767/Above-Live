@@ -663,26 +663,56 @@ function drawOptionalLayers(ctx, settings, mc, ld, theme, project, w, h, size, g
 
   // --- Celestial bodies (sun / moon / planets) on the sky dome ---
   // Drawn first so orbital + aircraft sit on top. Subtle by design.
-  if (layers.space && ld.space && Array.isArray(ld.space.bodies) && geom) {
+  if (layers.space && ld.space && geom) {
     const projectSky = makeSkyProjector({ center: geom.center, radiusPx: geom.radiusPx, calibration: geom.cal });
-    for (const body of ld.space.bodies) {
-      if (!(body.el > 0)) continue; // below horizon
-      const p = projectSky(body.az, body.el);
-      const color = CELESTIAL_COLORS[body.name] || '#dfe6f0';
-      drawSpaceBody(ctx, p.x, p.y, body.name, body.kind, color, mc.planets);
-      // 'major' shows Sun + Moon labels; 'all' shows every body.
-      const isMajorBody = body.kind === 'sun' || body.kind === 'moon';
-      const showThisLabel = spaceLabels === 'all' || (spaceLabels === 'major' && isMajorBody);
-      if (showThisLabel) {
-        ctx.save();
-        ctx.globalAlpha = mc.planets * 0.8;
-        ctx.shadowBlur = 0;
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'top';
-        ctx.font = `${Math.max(9, mc.labelDimSize - 1)}px ui-monospace, Menlo, Consolas, monospace`;
-        ctx.fillStyle = color;
-        ctx.fillText(body.name.toUpperCase(), p.x + 10, p.y - 7);
-        ctx.restore();
+    const moonPhaseData = ld.space.moon; // { phase, illumination, name, ... }
+
+    // Moon path arc — drawn under the glyphs so it reads as a background guide.
+    if (settings.display?.showMoonPath !== false && Array.isArray(ld.space.moonPath) && mc.planets > 0) {
+      ctx.save();
+      ctx.lineCap = 'round';
+      ctx.setLineDash([3, 8]);
+      ctx.lineWidth = 1.2;
+      ctx.strokeStyle = `rgba(200,215,235,${0.28 * mc.planets})`;
+      ctx.beginPath();
+      let moonPathStarted = false;
+      for (const pt of ld.space.moonPath) {
+        if (pt.el <= 0) { moonPathStarted = false; continue; }
+        const pp = projectSky(pt.az, pt.el);
+        if (!moonPathStarted) { ctx.moveTo(pp.x, pp.y); moonPathStarted = true; }
+        else ctx.lineTo(pp.x, pp.y);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+    }
+
+    // Body glyphs
+    if (Array.isArray(ld.space.bodies)) {
+      for (const body of ld.space.bodies) {
+        if (!(body.el > 0)) continue; // below horizon
+        const p = projectSky(body.az, body.el);
+        const color = CELESTIAL_COLORS[body.name] || '#dfe6f0';
+        const opts = body.kind === 'moon' ? { phase: moonPhaseData?.phase } : undefined;
+        drawSpaceBody(ctx, p.x, p.y, body.name, body.kind, color, mc.planets, opts);
+        // 'major' shows Sun + Moon labels; 'all' shows every body.
+        const isMajorBody = body.kind === 'sun' || body.kind === 'moon';
+        const showThisLabel = spaceLabels === 'all' || (spaceLabels === 'major' && isMajorBody);
+        if (showThisLabel) {
+          ctx.save();
+          ctx.globalAlpha = mc.planets * 0.8;
+          ctx.shadowBlur = 0;
+          ctx.textAlign = 'left';
+          ctx.textBaseline = 'top';
+          ctx.font = `${Math.max(9, mc.labelDimSize - 1)}px ui-monospace, Menlo, Consolas, monospace`;
+          ctx.fillStyle = color;
+          // Moon label: add phase name when major labels are on
+          const label = body.kind === 'moon' && moonPhaseData?.name
+            ? `MOON · ${moonPhaseData.name}`
+            : body.name.toUpperCase();
+          ctx.fillText(label, p.x + 10, p.y - 7);
+          ctx.restore();
+        }
       }
     }
   }

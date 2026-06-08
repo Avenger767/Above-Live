@@ -5,7 +5,7 @@
 // Jupiter, Saturn) as azimuth/elevation via a compact ephemeris (lib/astro.js).
 // It never makes external calls and never throws into the aircraft path.
 
-import { computeSky } from './lib/astro.js';
+import { computeSky, computeMoonPath, computeMoonRiseSet } from './lib/astro.js';
 
 export function createSpaceLayer() {
   const name = 'space';
@@ -30,13 +30,19 @@ export function createSpaceLayer() {
 
   function getMeta(s) {
     const bodies = cache?.bodies || [];
+    const m = cache?.moon || {};
     return {
       enabled: Boolean(s?.layers?.space),
       ok: Boolean(cache),
-      moonPhase: cache?.moon?.name || null,
+      moonPhase: m.name || null,
+      moonIllumination: m.illumination ?? null,
+      moonAz: m.az ?? null,
+      moonEl: m.el ?? null,
+      moonRise: m.rise || null,
+      moonSet:  m.set  || null,
       isDay: cache?.sun?.isDay ?? null,
-      count: bodies.length,                                  // sun+moon+planets
-      aboveHorizon: bodies.filter((b) => b.el > 0).length,   // currently visible
+      count: bodies.length,
+      aboveHorizon: bodies.filter((b) => b.el > 0).length,
       lastSuccess: lastSuccess || null,
       pollIntervalMs: pollIntervalMs(s),
     };
@@ -58,11 +64,23 @@ function compute(home, date) {
   const planets = bodies
     .filter((b) => b.kind === 'planet')
     .map((b) => ({ name: b.name, az: Math.round(b.az), el: Math.round(b.el), visible: b.el > 0 }));
+  const moonBody = bodies.find((b) => b.kind === 'moon');
+  const phase = moonPhase(date);
+  // Moon path: hourly positions over 24 h centred on now (Pi-friendly: 25 trig calls).
+  const moonPath = computeMoonPath(home, date, 24, 1);
+  const { rise: moonRise, set: moonSet } = computeMoonRiseSet(home, date);
   return {
-    moon: moonPhase(date),
+    moon: {
+      ...phase,
+      az:    moonBody ? Math.round(moonBody.az) : null,
+      el:    moonBody ? Math.round(moonBody.el) : null,
+      rise:  moonRise,
+      set:   moonSet,
+    },
     sun: sunInfo(home.lat, home.lon, date),
     bodies,    // [{ name, kind:'sun'|'moon'|'planet', az, el }] — rendered on the sky dome
     planets,   // summary for the SpaceCard
+    moonPath,  // [{az, el, t}] — hourly arc for the past/future 12 h
     timestamp: Date.now(),
   };
 }

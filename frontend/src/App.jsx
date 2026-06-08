@@ -24,6 +24,8 @@ export default function App() {
   const [tab, setTab] = useState('display'); // display | calibration | status
   const [testPattern, setTestPattern] = useState(false);
   const [renderStats, setRenderStats] = useState({ trackCount: 0, renderedCount: 0 });
+  // 'default' | 'settings' | 'browser' — how the current home coordinates were set.
+  const [homeSource, setHomeSource] = useState(null);
 
   const saveTimer = useRef(null);
   const prevModeRef = useRef(settings.display.displayMode || 'normal');
@@ -32,7 +34,13 @@ export default function App() {
   useEffect(() => {
     api
       .getSettings()
-      .then(setSettings)
+      .then((s) => {
+        setSettings(s);
+        const def = DEFAULT_SETTINGS.home;
+        setHomeSource(
+          s.home?.lat === def.lat && s.home?.lon === def.lon ? 'default' : 'settings'
+        );
+      })
       .catch(() => {
         /* keep defaults; backend may not be up yet */
       });
@@ -105,13 +113,22 @@ export default function App() {
     }
   }, [settings.display.displayMode]);
 
+  // Apply a home location update from the control panel (lat/lon/name validated there).
+  // Tracks whether this came from the browser geolocation API or a manual entry.
+  const updateHome = useCallback((homeObj, source = 'settings') => {
+    updateSettings({ home: homeObj });
+    setHomeSource(source);
+  }, [updateSettings]);
+
   const handleReset = useCallback(async () => {
     try {
       const fresh = await api.resetSettings();
       setSettings(fresh);
+      setHomeSource('default');
       setTestPattern(false);
     } catch (_e) {
       setSettings(DEFAULT_SETTINGS);
+      setHomeSource('default');
     }
   }, []);
 
@@ -188,6 +205,7 @@ export default function App() {
             <ControlPanel
               settings={settings}
               onChange={updateSettings}
+              onHomeChange={updateHome}
               onToggleFullscreen={toggleFullscreen}
               onReset={handleReset}
               onOpenCalibration={() => setTab('calibration')}
@@ -209,6 +227,7 @@ export default function App() {
               connectionMode={connectionMode}
               settings={settings}
               renderStats={renderStats}
+              homeSource={homeSource}
             />
           )}
         </div>

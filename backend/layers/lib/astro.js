@@ -164,3 +164,75 @@ export function computeSky(home, date = new Date()) {
 
   return out;
 }
+
+// Moon-only position (az, el) for a given observer + date. Faster path when
+// only the Moon is needed (path computation, rise/set search).
+function moonAzEl(home, date) {
+  const d = dayNumber(date);
+  const ecl = 23.4393 - 3.563e-7 * d;
+  const sun = sunData(d);
+  const ut = date.getUTCHours() + date.getUTCMinutes() / 60 + date.getUTCSeconds() / 3600;
+  const gmst0 = sun.Ls / 15 + 12;
+  const lst = rev((gmst0 + ut + home.lon / 15) * 15) / 15;
+
+  const N = 125.1228 - 0.0529538083 * d;
+  const i = 5.1454;
+  const w = 318.0634 + 0.1643573223 * d;
+  const a = 60.2666;
+  const e = 0.054900;
+  const M = rev(115.3654 + 13.0649929509 * d);
+  const E = eccentricAnomaly(M, e);
+  const xv = a * (cosd(E) - e);
+  const yv = a * Math.sqrt(1 - e * e) * sind(E);
+  const v = atan2d(yv, xv);
+  const r = Math.sqrt(xv * xv + yv * yv);
+  const vw = v + w;
+  const xh = r * (cosd(N) * cosd(vw) - sind(N) * sind(vw) * cosd(i));
+  const yh = r * (sind(N) * cosd(vw) + cosd(N) * sind(vw) * cosd(i));
+  const zh = r * (sind(vw) * sind(i));
+  const xe = xh;
+  const ye = yh * cosd(ecl) - zh * sind(ecl);
+  const ze = yh * sind(ecl) + zh * cosd(ecl);
+  const ra = rev(atan2d(ye, xe));
+  const dec = atan2d(ze, Math.sqrt(xe * xe + ye * ye));
+  return equatorialToAzEl(ra, dec, home.lat, lst);
+}
+
+// Moon path: az/el positions every `stepHrs` hours for `spanHrs` hours centered
+// on `date`. Returns [{az, el, t}]. Positions below the horizon (el < 0) are
+// included so the caller can detect rise/set crossings but skip rendering them.
+export function computeMoonPath(home, date, spanHrs = 24, stepHrs = 1) {
+  const out = [];
+  const startMs = date.getTime() - (spanHrs / 2) * 3600_000;
+  const steps = Math.round(spanHrs / stepHrs);
+  for (let i = 0; i <= steps; i++) {
+    const t = new Date(startMs + i * stepHrs * 3600_000);
+    const { az, el } = moonAzEl(home, t);
+    out.push({ az, el, t: t.getTime() });
+  }
+  return out;
+}
+
+// Moonrise and moonset (UTC) for the calendar day of `date`. Returns
+// { rise: "HH:MM"|null, set: "HH:MM"|null }. Uses 10-minute resolution.
+export function computeMoonRiseSet(home, date) {
+  const fmt = (h) => {
+    const hh = ((h % 24) + 24) % 24;
+    const m = Math.round((hh - Math.floor(hh)) * 60);
+    const hr = (Math.floor(hh) + (m === 60 ? 1 : 0)) % 24;
+    const mm = m === 60 ? 0 : m;
+    return `${String(hr).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+  };
+  const startOfDay = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  let rise = null, set = null, prev = null;
+  for (let min = 0; min <= 24 * 60; min += 10) {
+    const t = new Date(startOfDay.getTime() + min * 60_000);
+    const { el } = moonAzEl(home, t);
+    if (prev !== null) {
+      if (prev <= 0 && el > 0 && !rise) rise = fmt(t.getUTCHours() + t.getUTCMinutes() / 60);
+      if (prev > 0 && el <= 0 && rise && !set) set = fmt(t.getUTCHours() + t.getUTCMinutes() / 60);
+    }
+    prev = el;
+  }
+  return { rise, set };
+}

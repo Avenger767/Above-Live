@@ -68,7 +68,9 @@ function OrbitalRow({ label, meta }) {
   );
 }
 
-export default function StatusPanel({ status, aircraftCount, connectionMode, settings, renderStats }) {
+import { DEFAULT_SETTINGS } from '../lib/defaults.js';
+
+export default function StatusPanel({ status, aircraftCount, connectionMode, settings, renderStats, homeSource }) {
   const s = status || {};
   const fallback = s.usingFallback;
   const api = s.api;
@@ -83,9 +85,39 @@ export default function StatusPanel({ status, aircraftCount, connectionMode, set
   const mode = motionMode(settings || {});
   const modeLabel = mode === 'api' ? 'Slow API prediction' : 'Fast feed';
 
+  // Determine home source if not explicitly provided.
+  const home = settings?.home || {};
+  const defHome = DEFAULT_SETTINGS.home;
+  const derivedSource = homeSource
+    || (home.lat === defHome.lat && home.lon === defHome.lon ? 'default' : 'settings');
+
   return (
     <div className="status">
+
+      {/* ── Home / center location ── */}
       <div className="status-row">
+        <span className="status-key">Home label</span>
+        <span className="status-val">{home.name || '—'}</span>
+      </div>
+      <div className="status-row">
+        <span className="status-key">Home lat</span>
+        <span className="status-val">{home.lat != null ? Number(home.lat).toFixed(4) : '—'}</span>
+      </div>
+      <div className="status-row">
+        <span className="status-key">Home lon</span>
+        <span className="status-val">{home.lon != null ? Number(home.lon).toFixed(4) : '—'}</span>
+      </div>
+      <div className="status-row">
+        <span className="status-key">Center source</span>
+        <span className={`status-val ${derivedSource === 'default' ? '' : 'ok'}`}>
+          {derivedSource || '—'}
+        </span>
+      </div>
+      <div className="status-row">
+        <span className="status-key">Range</span>
+        <span className="status-val">{settings?.rangeNm ?? '—'} nm</span>
+      </div>
+      <div className="status-row" style={{ marginTop: 8 }}>
         <span className="status-key">Backend</span>
         <span className={`status-val ${s.backend === 'ok' ? 'ok' : 'bad'}`}>
           {s.backend === 'ok' ? 'online' : 'offline'}
@@ -279,7 +311,7 @@ export default function StatusPanel({ status, aircraftCount, connectionMode, set
           {layers.space && (
             <>
               <div className="status-row" style={{ marginTop: 8 }}>
-                <span className="status-key">Planets</span>
+                <span className="status-key">Sky objects</span>
                 <span className={`status-val ${s.space?.ok ? 'ok' : ''}`}>
                   {s.space?.ok ? `${s.space.aboveHorizon ?? 0}/${s.space.count ?? 0} up` : 'loading'}
                 </span>
@@ -288,6 +320,40 @@ export default function StatusPanel({ status, aircraftCount, connectionMode, set
                 <span className="status-key">Sky updated</span>
                 <span className="status-val">{timeAgo(s.space?.lastSuccess)}</span>
               </div>
+              {s.space?.ok && (
+                <>
+                  <div className="status-row" style={{ marginTop: 4 }}>
+                    <span className="status-key">Moon phase</span>
+                    <span className="status-val">{s.space.moonPhase || '—'}</span>
+                  </div>
+                  {s.space.moonIllumination != null && (
+                    <div className="status-row">
+                      <span className="status-key">Moon illum.</span>
+                      <span className="status-val">{s.space.moonIllumination}%</span>
+                    </div>
+                  )}
+                  {s.space.moonEl != null && (
+                    <div className="status-row">
+                      <span className="status-key">Moon az/el</span>
+                      <span className="status-val">
+                        {s.space.moonAz ?? '—'}° / {s.space.moonEl}°
+                        {s.space.moonEl <= 0 ? ' (below horizon)' : ''}
+                      </span>
+                    </div>
+                  )}
+                  {(s.space.moonRise || s.space.moonSet) && (
+                    <div className="status-row">
+                      <span className="status-key">Moon rise/set</span>
+                      <span className="status-val">
+                        {s.space.moonRise ? `↑ ${s.space.moonRise}` : '—'}
+                        {' / '}
+                        {s.space.moonSet ? `↓ ${s.space.moonSet}` : '—'}
+                        <span style={{ opacity: 0.6 }}> UTC</span>
+                      </span>
+                    </div>
+                  )}
+                </>
+              )}
             </>
           )}
         </>
