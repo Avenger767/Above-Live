@@ -450,6 +450,9 @@ async function migrationTests() {
   check(m.display.highlightEmergency === DEFAULT_SETTINGS.display.highlightEmergency, 'migration: display.highlightEmergency backfilled');
   check(m.display.glyphDebug === false, 'migration: display.glyphDebug backfilled');
   check(m.display.spaceLabels === DEFAULT_SETTINGS.display.spaceLabels, 'migration: display.spaceLabels backfilled');
+  check(m.display.radar && m.display.radar.rings === true && m.display.radar.compass === true
+    && m.display.radar.nmLabels === true && m.display.radar.crosshair === true,
+    'migration: display.radar overlay toggles backfilled (all on)');
 
   // The whole motion{} block (absent in the old file) comes from defaults.
   check(m.motion && m.motion.interpolate === true, 'migration: motion.interpolate backfilled');
@@ -881,6 +884,52 @@ async function recoveryAndCalibrationTests() {
 }
 
 // ---------------------------------------------------------------------------
+// Part K — radar overlay visibility (clean-sky vs radar look, no network)
+// ---------------------------------------------------------------------------
+async function radarOverlayTests() {
+  console.log('\nPart K — radar overlay visibility (no network)');
+  const { getRadarOverlay, RADAR_OVERLAY_ALL_ON, RADAR_OVERLAY_CLEAN_SKY } =
+    await import('../frontend/src/lib/displayModes.js');
+  const { DEFAULT_SETTINGS } = await import('../backend/settings/settingsStore.js');
+
+  // Default (no radar config) → everything visible (back-compat).
+  const def = getRadarOverlay({ display: {} });
+  check(def.rings && def.compass && def.nmLabels && def.crosshair,
+    'radar overlay: defaults to all-visible when unset');
+
+  // Each element can be hidden independently.
+  check(getRadarOverlay({ display: { radar: { compass: false } } }).compass === false,
+    'radar overlay: compass labels can be hidden');
+  check(getRadarOverlay({ display: { radar: { rings: false } } }).rings === false,
+    'radar overlay: range rings can be hidden');
+  check(getRadarOverlay({ display: { radar: { nmLabels: false } } }).nmLabels === false,
+    'radar overlay: nautical-mile labels can be hidden');
+  check(getRadarOverlay({ display: { radar: { crosshair: false } } }).crosshair === false,
+    'radar overlay: center crosshair can be hidden');
+
+  // Hiding one element leaves the others visible.
+  const onlyRingsOff = getRadarOverlay({ display: { radar: { rings: false } } });
+  check(onlyRingsOff.compass && onlyRingsOff.nmLabels && onlyRingsOff.crosshair,
+    'radar overlay: hiding rings leaves compass/nm/crosshair visible');
+
+  // Clean-sky preset hides the whole overlay; radar preset shows it all.
+  const clean = getRadarOverlay({ display: { radar: RADAR_OVERLAY_CLEAN_SKY } });
+  check(!clean.rings && !clean.compass && !clean.nmLabels && !clean.crosshair,
+    'radar overlay: clean-sky preset hides all overlay elements');
+  const full = getRadarOverlay({ display: { radar: RADAR_OVERLAY_ALL_ON } });
+  check(full.rings && full.compass && full.nmLabels && full.crosshair,
+    'radar overlay: radar preset shows all overlay elements');
+
+  // Object layers are independent of the radar overlay: clean-sky does not
+  // disable aircraft / satellites / ISS / planets / stars layers.
+  const layers = DEFAULT_SETTINGS.layers;
+  check(layers.aircraft === true && layers.stars === true,
+    'radar overlay: object layers (aircraft/stars) stay enabled regardless of overlay');
+  check('radar' in DEFAULT_SETTINGS.display && !('radar' in layers),
+    'radar overlay: lives under display, never touches the layers config');
+}
+
+// ---------------------------------------------------------------------------
 console.log(`Above Live — smoke check (port ${PORT})`);
 await integrationTests();
 await unitTests();
@@ -892,5 +941,6 @@ await localAdsbFormatTests();
 await spaceLayerTests();
 await starlinkBlockedTests();
 await recoveryAndCalibrationTests();
+await radarOverlayTests();
 console.log(failed ? '\nSMOKE CHECK FAILED' : '\nSMOKE CHECK PASSED');
 process.exit(failed ? 1 : 0);

@@ -35,6 +35,9 @@ export const DEFAULT_SETTINGS = {
     glyphDebug: false,
     // Space object label visibility: 'off' | 'major' (Sun/Moon/ISS) | 'all'
     spaceLabels: 'major',
+    // Radar/compass overlay visibility. Each element can be hidden independently
+    // for a clean live-sky / projector look; object layers are unaffected.
+    radar: { rings: true, compass: true, nmLabels: true, crosshair: true },
   },
   calibration: { offsetX: 0, offsetY: 0, scale: 1, rotation: 0, flipH: false, flipV: false },
 

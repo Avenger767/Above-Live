@@ -13,6 +13,25 @@ export const DISPLAY_MODES = {
 
 export const DISPLAY_MODE_KEYS = Object.keys(DISPLAY_MODES);
 
+// Radar overlay presets used by the control panel quick buttons.
+export const RADAR_OVERLAY_ALL_ON = { rings: true, compass: true, nmLabels: true, crosshair: true };
+export const RADAR_OVERLAY_CLEAN_SKY = { rings: false, compass: false, nmLabels: false, crosshair: false };
+
+// Resolve which radar/compass overlay elements should render, from settings.
+// Each element defaults to visible; an explicit `false` hides it. This only
+// affects the radar overlay (rings, compass letters, nautical-mile labels,
+// center crosshair) — aircraft, satellites, planets, ISS, stars and every other
+// object layer are independent and always render per their own layer settings.
+export function getRadarOverlay(settings) {
+  const r = (settings && settings.display && settings.display.radar) || {};
+  return {
+    rings:     r.rings !== false,
+    compass:   r.compass !== false,
+    nmLabels:  r.nmLabels !== false,
+    crosshair: r.crosshair !== false,
+  };
+}
+
 // Returns a render-config object for the draw loop.
 //   mode        — one of the DISPLAY_MODE_KEYS
 //   brightness  — master brightness slider [0..1]

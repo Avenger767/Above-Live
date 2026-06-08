@@ -4,7 +4,12 @@
 
 import React from 'react';
 import { THEMES, THEME_KEYS } from '../lib/themes.js';
-import { DISPLAY_MODES, DISPLAY_MODE_KEYS } from '../lib/displayModes.js';
+import {
+  DISPLAY_MODES,
+  DISPLAY_MODE_KEYS,
+  RADAR_OVERLAY_ALL_ON,
+  RADAR_OVERLAY_CLEAN_SKY,
+} from '../lib/displayModes.js';
 
 const PROVIDERS = ['MOCK', 'API', 'LOCAL_ADSB'];
 
@@ -33,8 +38,12 @@ export default function ControlPanel({ settings, onChange, onToggleFullscreen, o
   const bm = d.brightnessMap || {};
   const motion = settings.motion || {};
 
+  const radar = d.radar || {};
+
   const setDisplay = (patch) => onChange({ display: { ...d, ...patch } });
   const setLayer = (key, value) => onChange({ layers: { ...layers, [key]: value } });
+  const setRadar = (key, value) => setDisplay({ radar: { ...radar, [key]: value } });
+  const setRadarAll = (preset) => setDisplay({ radar: { ...preset } });
   const setMotion = (patch) => onChange({ motion: { ...motion, ...patch } });
   const setBrightnessMap = (key, val) =>
     setDisplay({ brightnessMap: { ...bm, [key]: val } });
@@ -188,6 +197,53 @@ export default function ControlPanel({ settings, onChange, onToggleFullscreen, o
           <option value="major">Major (Sun, Moon, ISS)</option>
           <option value="all">All objects</option>
         </select>
+      </label>
+
+      <h3>Radar Overlay</h3>
+      <p className="field-hint">
+        Hide the radar/compass guides for a clean live-sky look. Aircraft,
+        satellites, planets, ISS and stars keep rendering normally.
+      </p>
+
+      <div className="btn-row">
+        <button className="btn" onClick={() => setRadarAll(RADAR_OVERLAY_ALL_ON)}>Radar (all on)</button>
+        <button className="btn" onClick={() => setRadarAll(RADAR_OVERLAY_CLEAN_SKY)}>Clean sky</button>
+      </div>
+
+      <label className="field toggle">
+        <span>Range rings</span>
+        <input
+          type="checkbox"
+          checked={radar.rings !== false}
+          onChange={(e) => setRadar('rings', e.target.checked)}
+        />
+      </label>
+
+      <label className="field toggle">
+        <span>Compass labels</span>
+        <input
+          type="checkbox"
+          checked={radar.compass !== false}
+          onChange={(e) => setRadar('compass', e.target.checked)}
+        />
+      </label>
+
+      <label className="field toggle">
+        <span>Nautical-mile labels</span>
+        <input
+          type="checkbox"
+          checked={radar.nmLabels !== false}
+          onChange={(e) => setRadar('nmLabels', e.target.checked)}
+        />
+      </label>
+
+      <label className="field toggle">
+        <span>Center crosshair</span>
+        <input
+          type="checkbox"
+          checked={radar.crosshair !== false}
+          onChange={(e) => setRadar('crosshair', e.target.checked)}
+        />
       </label>
 
       <h3>Motion &amp; Performance</h3>

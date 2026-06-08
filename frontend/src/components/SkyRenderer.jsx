@@ -13,7 +13,7 @@
 
 import React, { useEffect, useRef } from 'react';
 import { getTheme } from '../lib/themes.js';
-import { getModeConfig } from '../lib/displayModes.js';
+import { getModeConfig, getRadarOverlay } from '../lib/displayModes.js';
 import {
   makeProjector,
   makeSkyProjector,
@@ -246,44 +246,65 @@ function draw(ctx, st, props, dt, nowMs) {
   const ringTextColor = mc.brightRings ? (theme.ringTextBright || theme.ringText) : theme.ringText;
   const compassColor  = mc.brightRings ? (theme.ringTextBright || theme.compass)  : theme.compass;
 
-  // --- Radar rings + range labels ---
-  ctx.save();
-  ctx.globalAlpha = mc.rings;
-  ctx.lineWidth = mc.brightRings ? 1.5 : 1;
-  const ringCount = 4;
-  for (let i = 1; i <= ringCount; i++) {
-    const r = (radiusPx * i) / ringCount;
-    ctx.beginPath();
-    ctx.strokeStyle = ringColor;
-    ctx.arc(center.x, center.y, r, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.fillStyle = ringTextColor;
-    ctx.font = '11px ui-monospace, Menlo, Consolas, monospace';
-    ctx.textAlign = 'left';
-    ctx.fillText(`${Math.round((rangeNm * i) / ringCount)} nm`, center.x + 4, center.y - r + 12);
+  // Radar/compass overlay element visibility (object layers are unaffected).
+  // Lets the user switch between a technical radar look and a clean live-sky
+  // look without touching aircraft / satellite / planet rendering.
+  const radarOverlay = getRadarOverlay(settings);
+
+  // --- Radar rings + range (nautical-mile) labels ---
+  if (mc.rings > 0 && (radarOverlay.rings || radarOverlay.nmLabels)) {
+    ctx.save();
+    ctx.globalAlpha = mc.rings;
+    ctx.lineWidth = mc.brightRings ? 1.5 : 1;
+    const ringCount = 4;
+    for (let i = 1; i <= ringCount; i++) {
+      const r = (radiusPx * i) / ringCount;
+      if (radarOverlay.rings) {
+        ctx.beginPath();
+        ctx.strokeStyle = ringColor;
+        ctx.arc(center.x, center.y, r, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      if (radarOverlay.nmLabels) {
+        ctx.fillStyle = ringTextColor;
+        ctx.font = '11px ui-monospace, Menlo, Consolas, monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText(`${Math.round((rangeNm * i) / ringCount)} nm`, center.x + 4, center.y - r + 12);
+      }
+    }
+    ctx.restore();
   }
-  ctx.strokeStyle = ringColor;
-  ctx.beginPath();
-  ctx.moveTo(center.x - radiusPx, center.y);
-  ctx.lineTo(center.x + radiusPx, center.y);
-  ctx.moveTo(center.x, center.y - radiusPx);
-  ctx.lineTo(center.x, center.y + radiusPx);
-  ctx.stroke();
-  ctx.restore();
+
+  // --- Center crosshair lines ---
+  if (mc.rings > 0 && radarOverlay.crosshair) {
+    ctx.save();
+    ctx.globalAlpha = mc.rings;
+    ctx.lineWidth = mc.brightRings ? 1.5 : 1;
+    ctx.strokeStyle = ringColor;
+    ctx.beginPath();
+    ctx.moveTo(center.x - radiusPx, center.y);
+    ctx.lineTo(center.x + radiusPx, center.y);
+    ctx.moveTo(center.x, center.y - radiusPx);
+    ctx.lineTo(center.x, center.y + radiusPx);
+    ctx.stroke();
+    ctx.restore();
+  }
 
   // --- Compass markers N / E / S / W ---
-  ctx.save();
-  ctx.globalAlpha = mc.compass;
-  ctx.fillStyle = compassColor;
-  ctx.font = 'bold 16px ui-monospace, Menlo, Consolas, monospace';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  const off = radiusPx + 16;
-  ctx.fillText('N', center.x, center.y - off);
-  ctx.fillText('S', center.x, center.y + off);
-  ctx.fillText('E', center.x + off, center.y);
-  ctx.fillText('W', center.x - off, center.y);
-  ctx.restore();
+  if (mc.compass > 0 && radarOverlay.compass) {
+    ctx.save();
+    ctx.globalAlpha = mc.compass;
+    ctx.fillStyle = compassColor;
+    ctx.font = 'bold 16px ui-monospace, Menlo, Consolas, monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const off = radiusPx + 16;
+    ctx.fillText('N', center.x, center.y - off);
+    ctx.fillText('S', center.x, center.y + off);
+    ctx.fillText('E', center.x + off, center.y);
+    ctx.fillText('W', center.x - off, center.y);
+    ctx.restore();
+  }
 
   // --- Center marker (home) ---
   ctx.save();
