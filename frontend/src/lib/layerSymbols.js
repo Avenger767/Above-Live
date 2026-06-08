@@ -87,23 +87,25 @@ export const CELESTIAL_COLORS = {
 function drawSunAt(ctx, color, alpha) {
   const r = 9;
   ctx.save();
-  // Outer corona glow
-  const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, r * 3.2);
-  glow.addColorStop(0, withAlpha(color, 0.42 * alpha));
-  glow.addColorStop(0.5, withAlpha(color, 0.1 * alpha));
+  // Wide warm corona glow
+  const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, r * 3.5);
+  glow.addColorStop(0, withAlpha(color, 0.50 * alpha));
+  glow.addColorStop(0.4, withAlpha(color, 0.18 * alpha));
   glow.addColorStop(1, withAlpha(color, 0));
   ctx.fillStyle = glow;
   ctx.beginPath();
-  ctx.arc(0, 0, r * 3.2, 0, Math.PI * 2);
+  ctx.arc(0, 0, r * 3.5, 0, Math.PI * 2);
   ctx.fill();
-  // 8 radial rays
-  ctx.strokeStyle = withAlpha(color, 0.65 * alpha);
-  ctx.lineWidth = 1.5;
+  // 8 short radial rays with rounded caps
+  ctx.strokeStyle = withAlpha(color, 0.70 * alpha);
+  ctx.lineWidth = 1.8;
+  ctx.lineCap = 'round';
   for (let i = 0; i < 8; i++) {
     const a = (i * Math.PI) / 4;
+    const cos = Math.cos(a), sin = Math.sin(a);
     ctx.beginPath();
-    ctx.moveTo(Math.cos(a) * r * 1.3, Math.sin(a) * r * 1.3);
-    ctx.lineTo(Math.cos(a) * r * 2.4, Math.sin(a) * r * 2.4);
+    ctx.moveTo(cos * r * 1.25, sin * r * 1.25);
+    ctx.lineTo(cos * r * 2.1, sin * r * 2.1);
     ctx.stroke();
   }
   // Disc
@@ -112,10 +114,18 @@ function drawSunAt(ctx, color, alpha) {
   ctx.beginPath();
   ctx.arc(0, 0, r, 0, Math.PI * 2);
   ctx.fill();
-  // Bright highlight
-  ctx.fillStyle = 'rgba(255,255,220,0.55)';
+  // Limb darkening (warmer/darker at edge)
+  const limb = ctx.createRadialGradient(0, 0, r * 0.4, 0, 0, r);
+  limb.addColorStop(0, 'rgba(0,0,0,0)');
+  limb.addColorStop(1, `rgba(80,20,0,${0.22 * alpha})`);
+  ctx.fillStyle = limb;
   ctx.beginPath();
-  ctx.arc(-r * 0.2, -r * 0.2, r * 0.42, 0, Math.PI * 2);
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.fill();
+  // Bright inner highlight
+  ctx.fillStyle = `rgba(255,255,220,${0.60 * alpha})`;
+  ctx.beginPath();
+  ctx.arc(-r * 0.18, -r * 0.18, r * 0.38, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 }
@@ -124,78 +134,188 @@ function drawMoonAt(ctx, color, alpha) {
   const r = 8;
   ctx.save();
   ctx.globalAlpha = alpha;
-  // Soft halo
-  const halo = ctx.createRadialGradient(0, 0, 0, 0, 0, r * 2.5);
-  halo.addColorStop(0, withAlpha(color, 0.22));
+  // Soft atmospheric halo
+  const halo = ctx.createRadialGradient(0, 0, 0, 0, 0, r * 2.2);
+  halo.addColorStop(0, withAlpha(color, 0.20));
   halo.addColorStop(1, withAlpha(color, 0));
   ctx.fillStyle = halo;
   ctx.beginPath();
-  ctx.arc(0, 0, r * 2.5, 0, Math.PI * 2);
+  ctx.arc(0, 0, r * 2.2, 0, Math.PI * 2);
   ctx.fill();
-  // Lit disc
+  // Full lit disc
   ctx.fillStyle = color;
   ctx.beginPath();
   ctx.arc(0, 0, r, 0, Math.PI * 2);
   ctx.fill();
-  // Phase shading: dark gradient offset to the right to suggest a crescent
-  const shade = ctx.createRadialGradient(r * 0.45, 0, 0, r * 0.45, 0, r * 1.35);
-  shade.addColorStop(0, `rgba(0,5,25,${0.78 * alpha})`);
-  shade.addColorStop(0.55, `rgba(0,5,25,${0.28 * alpha})`);
-  shade.addColorStop(1, `rgba(0,5,25,0)`);
-  ctx.fillStyle = shade;
-  ctx.beginPath();
-  ctx.arc(0, 0, r, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.restore();
-}
-
-function drawJupiterAt(ctx, color, alpha) {
-  const r = 5.5;
-  ctx.save();
-  ctx.globalAlpha = alpha;
-  // Disc
-  ctx.fillStyle = color;
-  ctx.beginPath();
-  ctx.arc(0, 0, r, 0, Math.PI * 2);
-  ctx.fill();
-  // Two horizontal cloud bands (clipped to disc)
+  // True crescent: clip to disc, then paint offset shadow circle over it.
+  // Shadow offset right → crescent illuminated on the left.
   ctx.save();
   ctx.beginPath();
   ctx.arc(0, 0, r, 0, Math.PI * 2);
   ctx.clip();
-  ctx.fillStyle = `rgba(110,72,36,${0.4 * alpha})`;
-  ctx.fillRect(-r, -r * 0.42, r * 2, r * 0.32);
-  ctx.fillRect(-r, r * 0.14, r * 2, r * 0.3);
+  ctx.fillStyle = `rgba(0,5,30,${0.90 * alpha})`;
+  ctx.beginPath();
+  ctx.arc(r * 0.48, 0, r * 0.96, 0, Math.PI * 2);
+  ctx.fill();
   ctx.restore();
   ctx.restore();
 }
 
+function drawVenusAt(ctx, color, alpha) {
+  const r = 5;
+  ctx.save();
+  // Very bright glow — Venus is the brightest natural object after the Sun and Moon
+  const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, r * 3.2);
+  glow.addColorStop(0, withAlpha(color, 0.50 * alpha));
+  glow.addColorStop(0.45, withAlpha(color, 0.15 * alpha));
+  glow.addColorStop(1, withAlpha(color, 0));
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 3.2, 0, Math.PI * 2);
+  ctx.fill();
+  // Disc
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.fill();
+  // Decorative ring at 1.75r
+  ctx.strokeStyle = withAlpha(color, 0.45 * alpha);
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 1.75, 0, Math.PI * 2);
+  ctx.stroke();
+  // Four short tick marks (crosshair-style) extending beyond the ring
+  ctx.strokeStyle = withAlpha(color, 0.55 * alpha);
+  ctx.lineWidth = 1.2;
+  ctx.lineCap = 'round';
+  for (let i = 0; i < 4; i++) {
+    const a = (i * Math.PI) / 2;
+    const cos = Math.cos(a), sin = Math.sin(a);
+    ctx.beginPath();
+    ctx.moveTo(cos * r * 1.75, sin * r * 1.75);
+    ctx.lineTo(cos * r * 2.2, sin * r * 2.2);
+    ctx.stroke();
+  }
+  // Bright specular highlight (thick Venusian cloud tops)
+  ctx.fillStyle = `rgba(255,255,255,${0.75 * alpha})`;
+  ctx.beginPath();
+  ctx.arc(-r * 0.22, -r * 0.22, r * 0.32, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawMarsAt(ctx, color, alpha) {
+  const r = 4.5;
+  ctx.save();
+  // Rusty glow
+  const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, r * 2.6);
+  glow.addColorStop(0, withAlpha(color, 0.35 * alpha));
+  glow.addColorStop(1, withAlpha(color, 0));
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 2.6, 0, Math.PI * 2);
+  ctx.fill();
+  // Disc
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.fill();
+  // Decorative ring
+  ctx.strokeStyle = withAlpha(color, 0.40 * alpha);
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 1.75, 0, Math.PI * 2);
+  ctx.stroke();
+  // Short ticks at cardinal points
+  ctx.strokeStyle = withAlpha(color, 0.50 * alpha);
+  ctx.lineWidth = 1;
+  ctx.lineCap = 'round';
+  for (let i = 0; i < 4; i++) {
+    const a = (i * Math.PI) / 2;
+    const cos = Math.cos(a), sin = Math.sin(a);
+    ctx.beginPath();
+    ctx.moveTo(cos * r * 1.75, sin * r * 1.75);
+    ctx.lineTo(cos * r * 2.15, sin * r * 2.15);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawJupiterAt(ctx, color, alpha) {
+  const r = 7;
+  ctx.save();
+  // Warm glow
+  const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, r * 2.0);
+  glow.addColorStop(0, withAlpha(color, 0.25 * alpha));
+  glow.addColorStop(1, withAlpha(color, 0));
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 2.0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = alpha;
+  // Disc
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.fill();
+  // Horizontal cloud bands (clipped to disc)
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.clip();
+  ctx.fillStyle = `rgba(100,58,18,${0.48 * alpha})`;
+  ctx.fillRect(-r, -r * 0.56, r * 2, r * 0.36);
+  ctx.fillStyle = `rgba(100,58,18,${0.32 * alpha})`;
+  ctx.fillRect(-r, r * 0.15, r * 2, r * 0.28);
+  ctx.restore();
+  // Subtle limb darkening
+  const limb = ctx.createRadialGradient(0, 0, r * 0.55, 0, 0, r);
+  limb.addColorStop(0, 'rgba(0,0,0,0)');
+  limb.addColorStop(1, `rgba(0,0,0,${0.22 * alpha})`);
+  ctx.fillStyle = limb;
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
 function drawSaturnAt(ctx, color, alpha) {
-  const r = 5.5;
+  const r = 6;
+  const rx = r * 2.3;  // ring semi-major axis
+  const ry = r * 0.48; // ring semi-minor axis (tilted appearance)
+  const tilt = 0.22;   // slight clockwise tilt for naturalism
   ctx.save();
   ctx.globalAlpha = alpha;
-  // Back half of ring (behind the disc)
-  ctx.strokeStyle = withAlpha(color, 0.6);
-  ctx.lineWidth = r * 0.4;
+  // Back ring half (behind disc)
+  ctx.strokeStyle = withAlpha(color, 0.58);
+  ctx.lineWidth = r * 0.52;
   ctx.beginPath();
-  ctx.ellipse(0, 0, r * 2.0, r * 0.52, 0, Math.PI, Math.PI * 2);
+  ctx.ellipse(0, 0, rx, ry, tilt, Math.PI, Math.PI * 2);
   ctx.stroke();
   // Disc
   ctx.fillStyle = color;
   ctx.beginPath();
   ctx.arc(0, 0, r, 0, Math.PI * 2);
   ctx.fill();
-  // Front half of ring (on top of disc)
+  // Front ring half (on top of disc)
   ctx.beginPath();
-  ctx.ellipse(0, 0, r * 2.0, r * 0.52, 0, 0, Math.PI);
+  ctx.ellipse(0, 0, rx, ry, tilt, 0, Math.PI);
+  ctx.stroke();
+  // Cassini division suggestion on front arc
+  ctx.strokeStyle = `rgba(0,0,0,${0.28 * alpha})`;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, rx * 0.80, ry * 0.80, tilt, 0, Math.PI);
   ctx.stroke();
   ctx.restore();
 }
 
+// Fallback for any planet not given a dedicated renderer.
 function drawPlanetDotAt(ctx, color, alpha) {
-  const r = 4.5;
+  const r = 4;
   ctx.save();
-  // Glow halo
   const halo = ctx.createRadialGradient(0, 0, 0, 0, 0, r * 2.4);
   halo.addColorStop(0, withAlpha(color, 0.28 * alpha));
   halo.addColorStop(1, withAlpha(color, 0));
@@ -203,7 +323,6 @@ function drawPlanetDotAt(ctx, color, alpha) {
   ctx.beginPath();
   ctx.arc(0, 0, r * 2.4, 0, Math.PI * 2);
   ctx.fill();
-  // Disc
   ctx.globalAlpha = alpha;
   ctx.fillStyle = color;
   ctx.beginPath();
@@ -219,6 +338,8 @@ export function drawSpaceBody(ctx, x, y, name, kind, color, alpha) {
   ctx.translate(x, y);
   if (kind === 'sun') drawSunAt(ctx, color, alpha);
   else if (kind === 'moon') drawMoonAt(ctx, color, alpha);
+  else if (name === 'Venus') drawVenusAt(ctx, color, alpha);
+  else if (name === 'Mars') drawMarsAt(ctx, color, alpha);
   else if (name === 'Jupiter') drawJupiterAt(ctx, color, alpha);
   else if (name === 'Saturn') drawSaturnAt(ctx, color, alpha);
   else drawPlanetDotAt(ctx, color, alpha);
