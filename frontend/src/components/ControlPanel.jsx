@@ -33,6 +33,15 @@ const BRIGHTNESS_ELEMENTS = [
   { key: 'satellites', label: 'Satellites' },
 ];
 
+// Per-type celestial dimming (Sun / Moon / planets / their labels). 0 hides,
+// 1 = full intended brightness. Works in every display mode.
+const CELESTIAL_BRIGHTNESS_ELEMENTS = [
+  { key: 'sun', label: 'Sun' },
+  { key: 'moon', label: 'Moon' },
+  { key: 'planets', label: 'Planets' },
+  { key: 'labels', label: 'Labels' },
+];
+
 // Validate lat/lon inputs. Returns an error string or null.
 function validateHome(lat, lon) {
   const latN = Number(lat);
@@ -58,6 +67,9 @@ export default function ControlPanel({ settings, onChange, onHomeChange, onToggl
   const setMotion = (patch) => onChange({ motion: { ...motion, ...patch } });
   const setBrightnessMap = (key, val) =>
     setDisplay({ brightnessMap: { ...bm, [key]: val } });
+  const cbright = d.celestialBrightness || {};
+  const setCelestialBrightness = (key, val) =>
+    setDisplay({ celestialBrightness: { ...cbright, [key]: val } });
 
   // ── Home location local edit state ──────────────────────────────────────────
   const [homeName, setHomeName] = useState(settings.home?.name ?? '');
@@ -345,6 +357,22 @@ export default function ControlPanel({ settings, onChange, onHomeChange, onToggl
         />
       </label>
       <p className="field-hint">Shows the Moon's daily arc across the sky (when Planets layer is on).</p>
+
+      <h3>Celestial Brightness</h3>
+      <p className="field-hint">
+        Dim the Sun, Moon and planets so they never overpower aircraft. 0% hides,
+        100% is full brightness. Aircraft are unaffected and always draw on top.
+      </p>
+      {CELESTIAL_BRIGHTNESS_ELEMENTS.map(({ key, label }) => (
+        <label className="field" key={key}>
+          <span>{label} ({Math.round((cbright[key] ?? 1) * 100)}%)</span>
+          <input
+            type="range" min="0" max="1" step="0.05"
+            value={cbright[key] ?? 1}
+            onChange={(e) => setCelestialBrightness(key, Number(e.target.value))}
+          />
+        </label>
+      ))}
 
       <h3>Radar Overlay</h3>
       <p className="field-hint">

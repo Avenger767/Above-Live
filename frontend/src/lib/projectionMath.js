@@ -51,10 +51,13 @@ export function makeSkyProjector({ center, radiusPx, calibration }) {
   const rot = ((cal.rotation ?? 0) * Math.PI) / 180;
   const flipH = cal.flipH ? -1 : 1;
   const flipV = cal.flipV ? -1 : 1;
+  // Celestial scale spreads the dome out from the zenith. Independent of the
+  // radar (aircraft) scale so Sun/Moon/planets can be tuned on their own.
+  const scale = clampScale(cal.scale ?? 1);
 
   return function projectSky(azDeg, elDeg) {
     const el = Math.max(0, Math.min(90, elDeg));
-    const r = radiusPx * (1 - el / 90); // zenith → center, horizon → edge
+    const r = radiusPx * (1 - el / 90) * scale; // zenith → center, horizon → edge
     const a = (azDeg * Math.PI) / 180;
     // Azimuth 0 = north = up (−y); east = +x.
     let x = r * Math.sin(a) * flipH;
@@ -109,6 +112,45 @@ export function getCalibration(settings) {
   const merged = { ...CALIBRATION_DEFAULTS, ...((settings && settings.calibration) || {}) };
   merged.scale = clampScale(merged.scale);
   return merged;
+}
+
+// Per-layer alignment defaults. The aircraft and celestial layers each carry an
+// independent scale + offset that composes ON TOP of the base calibration above,
+// so the radar (aircraft) projection can be tuned separately from the
+// sky-object (Sun/Moon/planet) projection. Both default to a no-op (1×, 0/0),
+// so a settings file without them behaves exactly as before.
+export const SUBCAL_DEFAULTS = { scale: 1, offsetX: 0, offsetY: 0 };
+
+function subCal(settings, key) {
+  return { ...SUBCAL_DEFAULTS, ...((settings && settings.calibration && settings.calibration[key]) || {}) };
+}
+
+// Aircraft layer calibration: base calibration with the aircraft scale/offset
+// folded in. Used for aircraft glyphs, trails and labels ONLY. Rotation/flip
+// come from the base calibration (physical mounting), shared by all layers.
+export function getAircraftCalibration(settings) {
+  const base = getCalibration(settings);
+  const sub = subCal(settings, 'aircraft');
+  return {
+    ...base,
+    scale:   clampScale(base.scale * clampScale(sub.scale)),
+    offsetX: base.offsetX + (Number(sub.offsetX) || 0),
+    offsetY: base.offsetY + (Number(sub.offsetY) || 0),
+  };
+}
+
+// Celestial layer calibration: Sun / Moon / planets / Moon path ONLY. The sky
+// dome ignores the base radar scale (its radius is fixed), so celestial scale is
+// taken solely from the celestial sub-calibration. Offset composes on the base.
+export function getCelestialCalibration(settings) {
+  const base = getCalibration(settings);
+  const sub = subCal(settings, 'celestial');
+  return {
+    ...base,
+    scale:   clampScale(sub.scale),
+    offsetX: base.offsetX + (Number(sub.offsetX) || 0),
+    offsetY: base.offsetY + (Number(sub.offsetY) || 0),
+  };
 }
 
 // Independent label rotation (radians). Lets text read upright from where the

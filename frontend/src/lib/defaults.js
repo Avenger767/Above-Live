@@ -24,8 +24,18 @@ export const DEFAULT_SETTINGS = {
     // Radar/compass overlay visibility (object layers are unaffected). Turn
     // these off for a clean live-sky / projector look.
     radar: { rings: true, compass: true, nmLabels: true, crosshair: true },
+    // Per-type brightness for Sun / Moon / planets / their labels (0..1).
+    // 1 = current full brightness; 0 hides. Works in every display mode.
+    celestialBrightness: { sun: 1, moon: 1, planets: 1, labels: 1 },
   },
-  calibration: { offsetX: 0, offsetY: 0, scale: 1, rotation: 0, flipH: false, flipV: false },
+  // Base alignment (rotation/flip/offset/scale shared by all layers) plus
+  // independent aircraft and celestial scale/offset so the radar projection and
+  // the sky-object projection can be tuned separately.
+  calibration: {
+    offsetX: 0, offsetY: 0, scale: 1, rotation: 0, flipH: false, flipV: false,
+    aircraft:  { scale: 1, offsetX: 0, offsetY: 0 },
+    celestial: { scale: 1, offsetX: 0, offsetY: 0 },
+  },
 
   // Smooth-motion model (see frontend/src/lib/aircraftMotion.js).
   motion: { interpolate: true, renderDelayMs: 1150, maxExtrapolationSec: 4, staleSec: 20 },

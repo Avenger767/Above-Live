@@ -454,6 +454,18 @@ async function migrationTests() {
     && m.display.radar.nmLabels === true && m.display.radar.crosshair === true,
     'migration: display.radar overlay toggles backfilled (all on)');
 
+  // Celestial brightness + per-layer calibration (added later) backfill safely.
+  check(m.display.celestialBrightness && m.display.celestialBrightness.sun === 1
+    && m.display.celestialBrightness.moon === 1 && m.display.celestialBrightness.planets === 1
+    && m.display.celestialBrightness.labels === 1,
+    'migration: display.celestialBrightness backfilled (all 1.0)');
+  check(m.calibration.aircraft && m.calibration.aircraft.scale === 1
+    && m.calibration.aircraft.offsetX === 0 && m.calibration.aircraft.offsetY === 0,
+    'migration: calibration.aircraft backfilled (1×, 0/0)');
+  check(m.calibration.celestial && m.calibration.celestial.scale === 1
+    && m.calibration.celestial.offsetX === 0 && m.calibration.celestial.offsetY === 0,
+    'migration: calibration.celestial backfilled (1×, 0/0)');
+
   // The whole motion{} block (absent in the old file) comes from defaults.
   check(m.motion && m.motion.interpolate === true, 'migration: motion.interpolate backfilled');
   check(m.motion.renderDelayMs === DEFAULT_SETTINGS.motion.renderDelayMs, 'migration: motion.renderDelayMs backfilled');
@@ -1044,6 +1056,153 @@ async function homeAndMoonTests() {
 }
 
 // ---------------------------------------------------------------------------
+// Part M — celestial brightness + per-layer calibration + render order (no network)
+// ---------------------------------------------------------------------------
+async function celestialBrightnessAndCalibrationTests() {
+  console.log('\nPart M — celestial brightness, per-layer calibration, render order (no network)');
+
+  const store = await import('../backend/settings/settingsStore.js');
+  const { getCelestialBrightness, DEFAULT_CELESTIAL_BRIGHTNESS } =
+    await import('../frontend/src/lib/displayModes.js');
+  const pm = await import('../frontend/src/lib/projectionMath.js');
+
+  // ── Defaults ────────────────────────────────────────────────────────────────
+  const dcb = store.DEFAULT_SETTINGS.display.celestialBrightness;
+  check(dcb && dcb.sun === 1 && dcb.moon === 1 && dcb.planets === 1 && dcb.labels === 1,
+    'celestial brightness: defaults are full (1.0) — no visual change for existing installs');
+  check(DEFAULT_CELESTIAL_BRIGHTNESS.sun === 1 && DEFAULT_CELESTIAL_BRIGHTNESS.labels === 1,
+    'celestial brightness: frontend default constant matches');
+
+  // ── getCelestialBrightness clamps to 0..1 and falls back safely ──────────────
+  const unset = getCelestialBrightness({ display: {} });
+  check(unset.sun === 1 && unset.moon === 1 && unset.planets === 1 && unset.labels === 1,
+    'celestial brightness: unset → all 1.0');
+  const set60 = getCelestialBrightness({ display: { celestialBrightness: { sun: 0.6, moon: 0.6, planets: 0.6, labels: 0.7 } } });
+  check(set60.sun === 0.6 && set60.moon === 0.6 && set60.planets === 0.6 && set60.labels === 0.7,
+    'celestial brightness: explicit values read back');
+  const clampHigh = getCelestialBrightness({ display: { celestialBrightness: { sun: 5 } } });
+  check(clampHigh.sun === 1, 'celestial brightness: above-1 clamped to 1');
+  const clampLow = getCelestialBrightness({ display: { celestialBrightness: { moon: -2 } } });
+  check(clampLow.moon === 0, 'celestial brightness: below-0 clamped to 0');
+  const clampNaN = getCelestialBrightness({ display: { celestialBrightness: { planets: 'oops' } } });
+  check(clampNaN.planets === 1, 'celestial brightness: non-numeric falls back to default 1');
+  check(getCelestialBrightness({ display: { celestialBrightness: { sun: 0 } } }).sun === 0,
+    'celestial brightness: 0 is allowed (hides the Sun)');
+
+  // ── Brightness settings persist across save/load ─────────────────────────────
+  {
+    const path = await import('node:path');
+    const url = await import('node:url');
+    const fs = await import('node:fs/promises');
+    const here = path.dirname(url.fileURLToPath(import.meta.url));
+    const settingsPath = path.join(here, '..', 'backend', 'data', 'settings.json');
+
+    await store.loadSettings();
+    await store.saveSettings({ display: { celestialBrightness: { sun: 0.3, moon: 0.45, planets: 0.5 } } });
+    const parsed = JSON.parse(await fs.readFile(settingsPath, 'utf8'));
+    check(parsed.display.celestialBrightness.sun === 0.3, `brightness persist: Sun saved (got ${parsed.display.celestialBrightness.sun})`);
+    check(parsed.display.celestialBrightness.moon === 0.45, `brightness persist: Moon saved (got ${parsed.display.celestialBrightness.moon})`);
+    check(parsed.display.celestialBrightness.planets === 0.5, `brightness persist: Planets saved (got ${parsed.display.celestialBrightness.planets})`);
+    // labels untouched by the partial save remains at its default.
+    check(parsed.display.celestialBrightness.labels === 1, 'brightness persist: untouched label brightness keeps default');
+
+    // Per-layer calibration persists too.
+    await store.saveSettings({ calibration: { aircraft: { scale: 3, offsetX: 120, offsetY: -40 }, celestial: { scale: 2, offsetX: -15, offsetY: 60 } } });
+    const parsed2 = JSON.parse(await fs.readFile(settingsPath, 'utf8'));
+    check(parsed2.calibration.aircraft.scale === 3 && parsed2.calibration.aircraft.offsetX === 120 && parsed2.calibration.aircraft.offsetY === -40,
+      'calibration persist: aircraft scale/offset saved');
+    check(parsed2.calibration.celestial.scale === 2 && parsed2.calibration.celestial.offsetX === -15 && parsed2.calibration.celestial.offsetY === 60,
+      'calibration persist: celestial scale/offset saved');
+    // Aircraft save must not have moved the celestial settings (independent).
+    check(parsed2.calibration.aircraft.scale === 3 && parsed2.calibration.celestial.scale === 2,
+      'calibration persist: aircraft and celestial are independent in storage');
+
+    // Reset returns everything to defaults.
+    await store.resetSettings();
+    const parsed3 = JSON.parse(await fs.readFile(settingsPath, 'utf8'));
+    check(parsed3.calibration.aircraft.scale === 1 && parsed3.calibration.aircraft.offsetX === 0,
+      'calibration reset: aircraft back to defaults');
+    check(parsed3.calibration.celestial.scale === 1 && parsed3.calibration.celestial.offsetX === 0,
+      'calibration reset: celestial back to defaults');
+  }
+
+  // ── Per-layer calibration math: aircraft vs celestial are independent ────────
+  // Aircraft scale supports up to 10×.
+  const acHigh = pm.getAircraftCalibration({ calibration: { aircraft: { scale: 10 } } });
+  check(acHigh.scale === 10, `calibration: aircraft scale supports 10× (got ${acHigh.scale})`);
+  const acClamp = pm.getAircraftCalibration({ calibration: { aircraft: { scale: 50 } } });
+  check(acClamp.scale === 10, 'calibration: aircraft scale clamped to 10×');
+  const celHigh = pm.getCelestialCalibration({ calibration: { celestial: { scale: 10 } } });
+  check(celHigh.scale === 10, `calibration: celestial scale supports 10× (got ${celHigh.scale})`);
+
+  // Changing aircraft calibration must not change the celestial projection.
+  const center = { x: 500, y: 400 };
+  const geom = { center, radiusPx: 360 };
+  const home = { lat: 32.7767, lon: -96.797 };
+
+  const baseSettings = { home, calibration: { offsetX: 0, offsetY: 0, scale: 1, rotation: 0, aircraft: { scale: 1, offsetX: 0, offsetY: 0 }, celestial: { scale: 1, offsetX: 0, offsetY: 0 } } };
+  const acMoved = JSON.parse(JSON.stringify(baseSettings)); acMoved.calibration.aircraft = { scale: 4, offsetX: 250, offsetY: -90 };
+  const celMoved = JSON.parse(JSON.stringify(baseSettings)); celMoved.calibration.celestial = { scale: 3, offsetX: -120, offsetY: 70 };
+
+  // Celestial (sky) projection: az/el → pixels.
+  const skyBase   = pm.makeSkyProjector({ ...geom, calibration: pm.getCelestialCalibration(baseSettings) });
+  const skyAcMove = pm.makeSkyProjector({ ...geom, calibration: pm.getCelestialCalibration(acMoved) });
+  const skyCelMove= pm.makeSkyProjector({ ...geom, calibration: pm.getCelestialCalibration(celMoved) });
+  const pB  = skyBase(120, 40);
+  const pA  = skyAcMove(120, 40);
+  const pC  = skyCelMove(120, 40);
+  check(pB.x === pA.x && pB.y === pA.y,
+    'render isolation: aircraft calibration does NOT move celestial (Sun/Moon/planets) screen position');
+  check(pC.x !== pB.x || pC.y !== pB.y,
+    'render isolation: celestial calibration DOES move celestial screen position');
+
+  // Aircraft projection: lat/lon → pixels.
+  const range = 60;
+  const acProjBase    = pm.makeProjector({ home, rangeNm: range, ...geom, calibration: pm.getAircraftCalibration(baseSettings) });
+  const acProjCelMove = pm.makeProjector({ home, rangeNm: range, ...geom, calibration: pm.getAircraftCalibration(celMoved) });
+  const acProjAcMove  = pm.makeProjector({ home, rangeNm: range, ...geom, calibration: pm.getAircraftCalibration(acMoved) });
+  const aB = acProjBase(home.lat + 0.2, home.lon + 0.2);
+  const aCel = acProjCelMove(home.lat + 0.2, home.lon + 0.2);
+  const aAc = acProjAcMove(home.lat + 0.2, home.lon + 0.2);
+  check(aB.x === aCel.x && aB.y === aCel.y,
+    'render isolation: celestial calibration does NOT move aircraft screen position');
+  check(aAc.x !== aB.x || aAc.y !== aB.y,
+    'render isolation: aircraft calibration DOES move aircraft screen position');
+
+  // Orbital objects (satellites/ISS/Starlink) ride the BASE calibration, so they
+  // are not dragged by aircraft OR celestial tuning (documented behavior).
+  const orbBase  = pm.makeProjector({ home, rangeNm: range, ...geom, calibration: pm.getCalibration(baseSettings) });
+  const orbAcMv  = pm.makeProjector({ home, rangeNm: range, ...geom, calibration: pm.getCalibration(acMoved) });
+  const oB = orbBase(home.lat + 0.2, home.lon + 0.2);
+  const oA = orbAcMv(home.lat + 0.2, home.lon + 0.2);
+  check(oB.x === oA.x && oB.y === oA.y,
+    'render isolation: satellites/ISS/Starlink stay on the base transform (unmoved by aircraft tuning)');
+
+  // ── Render order: aircraft drawn AFTER celestial/orbital layers ──────────────
+  // Verify in the source that drawOptionalLayers is invoked before the aircraft
+  // block (a structural guarantee that aircraft paint on top).
+  {
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    const url = await import('node:url');
+    const here = path.dirname(url.fileURLToPath(import.meta.url));
+    const src = await fs.readFile(path.join(here, '..', 'frontend', 'src', 'components', 'SkyRenderer.jsx'), 'utf8');
+    const optIdx = src.indexOf('drawOptionalLayers(ctx');
+    const acIdx  = src.indexOf('--- Aircraft (motion-interpolated) ---');
+    const glyphIdx = src.indexOf('Glyphs (nearest painted last');
+    check(optIdx > 0 && acIdx > 0 && optIdx < acIdx,
+      'render order: optional layers (celestial/orbital) draw before the aircraft block');
+    check(glyphIdx > optIdx, 'render order: aircraft glyphs draw after optional layers');
+    // There should be exactly one drawOptionalLayers *call* now (moved, not
+    // duplicated) — excluding the function definition itself.
+    const totalRefs = (src.match(/drawOptionalLayers\(ctx/g) || []).length;
+    const defRefs = (src.match(/function drawOptionalLayers\(ctx/g) || []).length;
+    const calls = totalRefs - defRefs;
+    check(calls === 1, `render order: single drawOptionalLayers call (got ${calls})`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 console.log(`Above Live — smoke check (port ${PORT})`);
 await integrationTests();
 await unitTests();
@@ -1057,5 +1216,6 @@ await starlinkBlockedTests();
 await recoveryAndCalibrationTests();
 await radarOverlayTests();
 await homeAndMoonTests();
+await celestialBrightnessAndCalibrationTests();
 console.log(failed ? '\nSMOKE CHECK FAILED' : '\nSMOKE CHECK PASSED');
 process.exit(failed ? 1 : 0);

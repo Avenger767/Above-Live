@@ -32,6 +32,29 @@ export function getRadarOverlay(settings) {
   };
 }
 
+// Celestial brightness defaults. 1.0 = the current full intended brightness
+// (no visual change for existing installs); 0 hides that object type. These
+// multiply on top of the active display mode's planet alpha, so they work the
+// same in normal, radar, ambient and projector modes — and let projector mode
+// dim the Sun/Moon/planets without touching aircraft.
+export const DEFAULT_CELESTIAL_BRIGHTNESS = { sun: 1, moon: 1, planets: 1, labels: 1 };
+
+// Resolve per-type celestial brightness (0..1) from settings, clamped safe.
+export function getCelestialBrightness(settings) {
+  const cb = (settings && settings.display && settings.display.celestialBrightness) || {};
+  const clamp01 = (v, def) => {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return def;
+    return Math.max(0, Math.min(1, n));
+  };
+  return {
+    sun:     clamp01(cb.sun,     DEFAULT_CELESTIAL_BRIGHTNESS.sun),
+    moon:    clamp01(cb.moon,    DEFAULT_CELESTIAL_BRIGHTNESS.moon),
+    planets: clamp01(cb.planets, DEFAULT_CELESTIAL_BRIGHTNESS.planets),
+    labels:  clamp01(cb.labels,  DEFAULT_CELESTIAL_BRIGHTNESS.labels),
+  };
+}
+
 // Returns a render-config object for the draw loop.
 //   mode        — one of the DISPLAY_MODE_KEYS
 //   brightness  — master brightness slider [0..1]

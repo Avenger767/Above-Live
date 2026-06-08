@@ -6,11 +6,19 @@
 import React from 'react';
 import { ceilingPreset, clampScale } from '../lib/projectionMath.js';
 
+const SUBCAL_DEFAULT = { scale: 1, offsetX: 0, offsetY: 0 };
+
 export default function CalibrationPanel({ settings, onChange, testPattern, onToggleTest, onResetCalibration }) {
   const c = settings.calibration;
   const d = settings.display || {};
+  const ac = c.aircraft || SUBCAL_DEFAULT;
+  const cel = c.celestial || SUBCAL_DEFAULT;
   const set = (patch) => onChange({ calibration: { ...c, ...patch } });
   const setDisplay = (patch) => onChange({ display: { ...d, ...patch } });
+  const setAircraft = (patch) => onChange({ calibration: { aircraft: { ...ac, ...patch } } });
+  const setCelestial = (patch) => onChange({ calibration: { celestial: { ...cel, ...patch } } });
+  const resetAircraft = () => onChange({ calibration: { aircraft: { ...SUBCAL_DEFAULT } } });
+  const resetCelestial = () => onChange({ calibration: { celestial: { ...SUBCAL_DEFAULT } } });
   const applyCeilingPreset = () => onChange({ calibration: { ...c, ...ceilingPreset() } });
 
   return (
@@ -108,6 +116,78 @@ export default function CalibrationPanel({ settings, onChange, testPattern, onTo
       <p className="field-hint">
         Mirrors horizontally and resets offset/scale/rotation — a good start for a ceiling-mounted projector.
       </p>
+
+      {/* ── Aircraft alignment (radar projection only) ─────────────────────── */}
+      <h3>Aircraft Alignment</h3>
+      <p className="field-hint">
+        Fine-tunes only aircraft glyphs, trails and labels. Planets, Moon, Sun
+        and satellites are not moved. Composes on top of the base scale above.
+      </p>
+
+      <label className="field">
+        <span>Aircraft scale: {Number(ac.scale ?? 1).toFixed(2)}×</span>
+        <input
+          type="range" min="0.25" max="10" step="0.05"
+          value={ac.scale ?? 1}
+          onChange={(e) => setAircraft({ scale: clampScale(Number(e.target.value)) })}
+        />
+      </label>
+
+      <label className="field">
+        <span>Aircraft X offset ({Math.round(ac.offsetX ?? 0)})</span>
+        <input
+          type="range" min="-1000" max="1000" step="1"
+          value={ac.offsetX ?? 0}
+          onChange={(e) => setAircraft({ offsetX: Number(e.target.value) })}
+        />
+      </label>
+
+      <label className="field">
+        <span>Aircraft Y offset ({Math.round(ac.offsetY ?? 0)})</span>
+        <input
+          type="range" min="-1000" max="1000" step="1"
+          value={ac.offsetY ?? 0}
+          onChange={(e) => setAircraft({ offsetY: Number(e.target.value) })}
+        />
+      </label>
+
+      <button className="btn" onClick={resetAircraft}>Reset aircraft alignment</button>
+
+      {/* ── Celestial alignment (Sun / Moon / planets only) ────────────────── */}
+      <h3>Celestial Alignment</h3>
+      <p className="field-hint">
+        Fine-tunes only the Sun, Moon, planets and Moon path. Aircraft and
+        satellites are not moved.
+      </p>
+
+      <label className="field">
+        <span>Celestial scale: {Number(cel.scale ?? 1).toFixed(2)}×</span>
+        <input
+          type="range" min="0.25" max="10" step="0.05"
+          value={cel.scale ?? 1}
+          onChange={(e) => setCelestial({ scale: clampScale(Number(e.target.value)) })}
+        />
+      </label>
+
+      <label className="field">
+        <span>Celestial X offset ({Math.round(cel.offsetX ?? 0)})</span>
+        <input
+          type="range" min="-1000" max="1000" step="1"
+          value={cel.offsetX ?? 0}
+          onChange={(e) => setCelestial({ offsetX: Number(e.target.value) })}
+        />
+      </label>
+
+      <label className="field">
+        <span>Celestial Y offset ({Math.round(cel.offsetY ?? 0)})</span>
+        <input
+          type="range" min="-1000" max="1000" step="1"
+          value={cel.offsetY ?? 0}
+          onChange={(e) => setCelestial({ offsetY: Number(e.target.value) })}
+        />
+      </label>
+
+      <button className="btn" onClick={resetCelestial}>Reset celestial alignment</button>
 
       <button className="btn btn-danger" onClick={onResetCalibration}>
         Reset calibration

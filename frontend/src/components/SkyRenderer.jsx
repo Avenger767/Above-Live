@@ -13,12 +13,14 @@
 
 import React, { useEffect, useRef } from 'react';
 import { getTheme } from '../lib/themes.js';
-import { getModeConfig, getRadarOverlay } from '../lib/displayModes.js';
+import { getModeConfig, getRadarOverlay, getCelestialBrightness } from '../lib/displayModes.js';
 import {
   makeProjector,
   makeSkyProjector,
   projectHeading,
   getCalibration,
+  getAircraftCalibration,
+  getCelestialCalibration,
   labelRotationRad,
   isEmergencySquawk,
 } from '../lib/projectionMath.js';
@@ -202,7 +204,14 @@ function draw(ctx, st, props, dt, nowMs) {
   const center = { x: w / 2, y: h / 2 };
   const radiusPx = Math.min(w, h) / 2 - Math.min(w, h) * 0.06;
   const rangeNm = settings.rangeNm || 60;
+  // Three calibrations, all driven by data coordinates (positions never change):
+  //   cal          — base mounting transform (rotation/flip/offset/scale), used
+  //                  for orbital objects (satellites / ISS / Starlink).
+  //   aircraftCal  — base + independent aircraft scale/offset (aircraft only).
+  //   celestialCal — base + independent celestial scale/offset (Sun/Moon/planets).
   const cal = getCalibration(settings);
+  const aircraftCal = getAircraftCalibration(settings);
+  const celestialCal = getCelestialCalibration(settings);
   const layers = settings.layers || {};
   const ld = layerData || {};
 
@@ -317,7 +326,10 @@ function draw(ctx, st, props, dt, nowMs) {
   ctx.fill();
   ctx.restore();
 
-  const project = makeProjector({ home: settings.home, rangeNm, center, radiusPx, calibration: cal });
+  // Aircraft projector (aircraft glyphs/trails/labels). Orbital objects keep the
+  // base projector so tuning aircraft alignment never drags satellites/ISS/Starlink.
+  const project = makeProjector({ home: settings.home, rangeNm, center, radiusPx, calibration: aircraftCal });
+  const projectOrbital = makeProjector({ home: settings.home, rangeNm, center, radiusPx, calibration: cal });
 
   // --- Calibration test pattern / debug overlay ---
   if (testPattern || mc.isCalibration) {
@@ -325,6 +337,18 @@ function draw(ctx, st, props, dt, nowMs) {
     drawCalibrationHud(ctx, st, settings, effSettings, project, center, radiusPx, theme, brightness, now);
     return;
   }
+
+  // --- Optional layers FIRST, so aircraft always paint on top of them ---
+  // Render order (back → front): celestial bodies + Moon path, then orbital
+  // objects (satellites / Starlink / ISS), then weather wash. The aircraft block
+  // below draws after all of these, guaranteeing aircraft glyphs/labels are
+  // never covered by the Sun, Moon, planets, satellites or their glow.
+  drawOptionalLayers(ctx, settings, mc, ld, theme, projectOrbital, w, h, size, {
+    center,
+    radiusPx,
+    celestialCal,
+    celestialBrightness: getCelestialBrightness(settings),
+  });
 
   // --- Aircraft (motion-interpolated) ---
   const altColorOn = settings.display.altitudeColor !== false;
@@ -346,9 +370,9 @@ function draw(ctx, st, props, dt, nowMs) {
       const p = project(pos.lat, pos.lon);
       if (p.x < -60 || p.x > w + 60 || p.y < -60 || p.y > h + 60) continue;
 
-      // Heading: derive from motion, project through calibration, then ease.
+      // Heading: derive from motion, project through aircraft calibration, then ease.
       const geoHdg = sampleTrackHeading(tr, renderTime, effSettings);
-      const projHdg = projectHeading(geoHdg, cal);
+      const projHdg = projectHeading(geoHdg, aircraftCal);
       tr.renderHeading = smoothHeading(tr.renderHeading, projHdg, headingK);
 
       const ac = tr.ac;
@@ -481,9 +505,6 @@ function draw(ctx, st, props, dt, nowMs) {
       trailSegmentCap: MAX_TRAIL_SEGMENTS,
     });
   }
-
-  // --- Optional layers (weather wash + wind, orbital objects, celestial) ---
-  drawOptionalLayers(ctx, settings, mc, ld, theme, project, w, h, size, { center, radiusPx, cal });
 }
 
 // ---------------------------------------------------------------------------
@@ -622,10 +643,14 @@ function getThemeLabelColor(settings) {
 // ---------------------------------------------------------------------------
 // Optional layers
 // ---------------------------------------------------------------------------
-function drawOptionalLayers(ctx, settings, mc, ld, theme, project, w, h, size, geom) {
+function drawOptionalLayers(ctx, settings, mc, ld, theme, projectOrbital, w, h, size, geom) {
   const layers = settings.layers || {};
   const showLabels = settings.display.labels !== false;
   const spaceLabels = settings.display.spaceLabels ?? 'major';
+  // Orbital objects (satellites / ISS / Starlink) ride the base projector.
+  const project = projectOrbital;
+  // Per-type celestial brightness (Sun/Moon/planets/labels), 0..1.
+  const cb = geom.celestialBrightness || { sun: 1, moon: 1, planets: 1, labels: 1 };
 
   // Weather: faint canvas wash + wind arrow. No overlay in projector mode.
   if (!mc.noCanvasOverlays && layers.weather && ld.weather) {
@@ -664,16 +689,17 @@ function drawOptionalLayers(ctx, settings, mc, ld, theme, project, w, h, size, g
   // --- Celestial bodies (sun / moon / planets) on the sky dome ---
   // Drawn first so orbital + aircraft sit on top. Subtle by design.
   if (layers.space && ld.space && geom) {
-    const projectSky = makeSkyProjector({ center: geom.center, radiusPx: geom.radiusPx, calibration: geom.cal });
+    const projectSky = makeSkyProjector({ center: geom.center, radiusPx: geom.radiusPx, calibration: geom.celestialCal });
     const moonPhaseData = ld.space.moon; // { phase, illumination, name, ... }
 
     // Moon path arc — drawn under the glyphs so it reads as a background guide.
-    if (settings.display?.showMoonPath !== false && Array.isArray(ld.space.moonPath) && mc.planets > 0) {
+    // Dimmed with the Moon's own brightness so a faint Moon keeps a faint path.
+    if (settings.display?.showMoonPath !== false && Array.isArray(ld.space.moonPath) && mc.planets * cb.moon > 0) {
       ctx.save();
       ctx.lineCap = 'round';
       ctx.setLineDash([3, 8]);
       ctx.lineWidth = 1.2;
-      ctx.strokeStyle = `rgba(200,215,235,${0.28 * mc.planets})`;
+      ctx.strokeStyle = `rgba(200,215,235,${0.28 * mc.planets * cb.moon})`;
       ctx.beginPath();
       let moonPathStarted = false;
       for (const pt of ld.space.moonPath) {
@@ -691,16 +717,21 @@ function drawOptionalLayers(ctx, settings, mc, ld, theme, project, w, h, size, g
     if (Array.isArray(ld.space.bodies)) {
       for (const body of ld.space.bodies) {
         if (!(body.el > 0)) continue; // below horizon
+        // Per-type dimming: Sun, Moon and planets each carry their own brightness
+        // (0 hides). The alpha drives glyph glow, fill and stroke together.
+        const bright = body.kind === 'sun' ? cb.sun : body.kind === 'moon' ? cb.moon : cb.planets;
+        const bodyAlpha = mc.planets * bright;
+        if (bodyAlpha <= 0.002) continue; // brightness 0 → hidden
         const p = projectSky(body.az, body.el);
         const color = CELESTIAL_COLORS[body.name] || '#dfe6f0';
         const opts = body.kind === 'moon' ? { phase: moonPhaseData?.phase } : undefined;
-        drawSpaceBody(ctx, p.x, p.y, body.name, body.kind, color, mc.planets, opts);
+        drawSpaceBody(ctx, p.x, p.y, body.name, body.kind, color, bodyAlpha, opts);
         // 'major' shows Sun + Moon labels; 'all' shows every body.
         const isMajorBody = body.kind === 'sun' || body.kind === 'moon';
         const showThisLabel = spaceLabels === 'all' || (spaceLabels === 'major' && isMajorBody);
         if (showThisLabel) {
           ctx.save();
-          ctx.globalAlpha = mc.planets * 0.8;
+          ctx.globalAlpha = mc.planets * 0.8 * cb.labels;
           ctx.shadowBlur = 0;
           ctx.textAlign = 'left';
           ctx.textBaseline = 'top';
@@ -852,7 +883,10 @@ function drawTestPattern(ctx, w, h, center, radiusPx, theme, brightness) {
 // Debug HUD: current display mode + calibration values, plus a few sample
 // aircraft glyphs so you can confirm orientation/scale before going live.
 function drawCalibrationHud(ctx, st, settings, effSettings, project, center, radiusPx, theme, brightness, now) {
-  const cal = getCalibration(settings);
+  // The passed-in `project` is the aircraft projector, so sample glyphs and
+  // headings reflect aircraft alignment specifically.
+  const base = getCalibration(settings);
+  const cal = getAircraftCalibration(settings);
   const d = settings.display || {};
 
   // Sample aircraft: live tracks if any, otherwise four synthetic ones at the
@@ -890,15 +924,20 @@ function drawCalibrationHud(ctx, st, settings, effSettings, project, center, rad
   }
   ctx.restore();
 
-  // Calibration values panel (top-left).
+  // Calibration values panel (top-left). Shows the base mounting transform plus
+  // the independent aircraft and celestial scale/offset.
+  const ac = settings.calibration?.aircraft || {};
+  const cel = settings.calibration?.celestial || {};
   const lines = [
-    `MODE      ${(d.displayMode || 'normal').toUpperCase()}`,
-    `OFFSET    x ${Math.round(cal.offsetX)}   y ${Math.round(cal.offsetY)}`,
-    `SCALE     ${Number(cal.scale).toFixed(2)}x`,
-    `ROTATION  ${Math.round(cal.rotation)} deg`,
-    `MIRROR    H ${cal.flipH ? 'on' : 'off'}   V ${cal.flipV ? 'on' : 'off'}`,
-    `LABEL ROT ${Math.round(d.labelRotationDeg || 0)} deg`,
-    `RANGE     ${settings.rangeNm || 60} nm`,
+    `MODE       ${(d.displayMode || 'normal').toUpperCase()}`,
+    `BASE OFF   x ${Math.round(base.offsetX)}  y ${Math.round(base.offsetY)}`,
+    `BASE SCALE ${Number(base.scale).toFixed(2)}x`,
+    `ROTATION   ${Math.round(base.rotation)} deg`,
+    `MIRROR     H ${base.flipH ? 'on' : 'off'}  V ${base.flipV ? 'on' : 'off'}`,
+    `AIRCRAFT   ${Number(ac.scale ?? 1).toFixed(2)}x  x ${Math.round(ac.offsetX ?? 0)}  y ${Math.round(ac.offsetY ?? 0)}`,
+    `CELESTIAL  ${Number(cel.scale ?? 1).toFixed(2)}x  x ${Math.round(cel.offsetX ?? 0)}  y ${Math.round(cel.offsetY ?? 0)}`,
+    `LABEL ROT  ${Math.round(d.labelRotationDeg || 0)} deg`,
+    `RANGE      ${settings.rangeNm || 60} nm`,
   ];
   ctx.save();
   ctx.globalAlpha = Math.min(1, brightness + 0.1);
@@ -908,7 +947,7 @@ function drawCalibrationHud(ctx, st, settings, effSettings, project, center, rad
   const padX = 14;
   const padY = 14;
   const lineH = 16;
-  const boxW = 240;
+  const boxW = 290;
   const boxH = lines.length * lineH + 16;
   ctx.fillStyle = 'rgba(0,0,0,0.55)';
   ctx.fillRect(padX - 6, padY - 6, boxW, boxH);
