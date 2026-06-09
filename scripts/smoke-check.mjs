@@ -1199,7 +1199,112 @@ async function celestialBrightnessAndCalibrationTests() {
     const defRefs = (src.match(/function drawOptionalLayers\(ctx/g) || []).length;
     const calls = totalRefs - defRefs;
     check(calls === 1, `render order: single drawOptionalLayers call (got ${calls})`);
+
+    // Confirm `size` is defined BEFORE drawOptionalLayers is called so there is
+    // no TDZ (temporal dead zone) error that kills the draw loop silently.
+    const sizeIdx = src.indexOf("const size = 14 *");
+    const optCallIdx = src.indexOf("drawOptionalLayers(ctx, settings, mc, ld, theme, projectOrbital");
+    check(sizeIdx > 0 && optCallIdx > 0 && sizeIdx < optCallIdx,
+      'render order: `size` is declared before drawOptionalLayers call (no TDZ)');
   }
+}
+
+// ---------------------------------------------------------------------------
+// Part N — aircraft projection, visibility, and layer guard (no network)
+// ---------------------------------------------------------------------------
+async function aircraftVisibilityTests() {
+  console.log('\nPart N — aircraft projection, visibility, layer guard (no network)');
+
+  const pm    = await import('../frontend/src/lib/projectionMath.js');
+  const dm    = await import('../frontend/src/lib/displayModes.js');
+  const store = await import('../backend/settings/settingsStore.js');
+
+  const { RADAR_OVERLAY_CLEAN_SKY, getRadarOverlay, getModeConfig } = dm;
+  const { makeProjector, getCalibration, getAircraftCalibration, SCALE_MIN, SCALE_MAX } = pm;
+  const DEFAULT_SETTINGS = store.DEFAULT_SETTINGS;
+
+  // Canvas geometry used across tests.
+  const W = 1280, H = 720;
+  const center = { x: W / 2, y: H / 2 };
+  const radiusPx = Math.min(W, H) / 2 - Math.min(W, H) * 0.06;
+
+  // ── layers.aircraft defaults to true / treated as true when absent ──────────
+  check(DEFAULT_SETTINGS.layers.aircraft === true,
+    'aircraft layer: defaults to true in DEFAULT_SETTINGS');
+  // Mirror the renderer's guard: `layers.aircraft !== false` — undefined counts as visible.
+  check({}.aircraft !== false, 'aircraft layer: undefined treated as visible (not equal to false)');
+  check({ aircraft: false }.aircraft === false, 'aircraft layer: explicit false hides aircraft');
+
+  // ── Aircraft alpha is > 0 in all non-calibration display modes ──────────────
+  for (const mode of ['normal', 'projector', 'radar', 'ambient']) {
+    const mc = getModeConfig(mode, 1, {});
+    check(mc.aircraft > 0,
+      `aircraft alpha: mode "${mode}" has aircraft > 0 (got ${mc.aircraft})`);
+  }
+
+  // ── getAircraftCalibration safe defaults do not hide/misplace aircraft ───────
+  const defCal = getAircraftCalibration({});
+  check(defCal.scale === 1,    `aircraft cal defaults: scale is 1 (got ${defCal.scale})`);
+  check(defCal.offsetX === 0,  `aircraft cal defaults: offsetX is 0 (got ${defCal.offsetX})`);
+  check(defCal.offsetY === 0,  `aircraft cal defaults: offsetY is 0 (got ${defCal.offsetY})`);
+
+  // Missing aircraft sub-cal also gives safe defaults.
+  const missingSubCal = getAircraftCalibration({ calibration: { offsetX: 0, offsetY: 0, scale: 1, rotation: 0 } });
+  check(missingSubCal.scale === 1, 'aircraft cal: missing aircraft sub-cal defaults to 1×');
+
+  // Scale clamped — even a pathological sub-cal cannot place aircraft off-screen
+  // by scaling to 0 (minimum is SCALE_MIN = 0.25).
+  const zeroScale = getAircraftCalibration({ calibration: { aircraft: { scale: 0 } } });
+  check(zeroScale.scale >= SCALE_MIN,
+    `aircraft cal: scale 0 clamped to SCALE_MIN=${SCALE_MIN} (got ${zeroScale.scale})`);
+  const hugeScale = getAircraftCalibration({ calibration: { aircraft: { scale: 999 } } });
+  check(hugeScale.scale <= SCALE_MAX,
+    `aircraft cal: scale 999 clamped to SCALE_MAX=${SCALE_MAX} (got ${hugeScale.scale})`);
+
+  // ── MOCK aircraft project inside canvas under default calibration ─────────────
+  // Simulate what the MOCK provider returns: aircraft scattered within ~60 nm.
+  const home = DEFAULT_SETTINGS.home; // Dallas
+  const rangeNm = 60;
+  const defAircraftCal = getAircraftCalibration(DEFAULT_SETTINGS);
+  const project = makeProjector({ home, rangeNm, center, radiusPx, calibration: defAircraftCal });
+  const tolerance = 60; // renderer culls with a 60-px border margin
+
+  // A MOCK aircraft 30 nm north of home — should be in the upper half.
+  const north30 = project(home.lat + 0.5, home.lon); // ~30 nm N
+  check(north30.x > -tolerance && north30.x < W + tolerance &&
+        north30.y > -tolerance && north30.y < H + tolerance,
+    `projection: MOCK aircraft 30nm N of home is on canvas (x=${north30.x.toFixed(0)}, y=${north30.y.toFixed(0)})`);
+  check(north30.y < center.y, 'projection: aircraft north of home projects to upper half');
+
+  // An aircraft at home exactly → should be at canvas center.
+  const atHome = project(home.lat, home.lon);
+  check(Math.abs(atHome.x - center.x) < 1 && Math.abs(atHome.y - center.y) < 1,
+    `projection: aircraft at home lat/lon projects to canvas center (x=${atHome.x.toFixed(1)}, y=${atHome.y.toFixed(1)})`);
+
+  // An aircraft 80 nm away (outside default 60 nm range) — should be off canvas
+  // (>60 px outside boundary) so the renderer's cull condition fires.
+  const far80 = project(home.lat + 1.333, home.lon); // ~80 nm N
+  check(far80.y < -tolerance || far80.x < -tolerance || far80.x > W + tolerance || far80.y > H + tolerance,
+    `projection: aircraft outside range is culled (x=${far80.x.toFixed(0)}, y=${far80.y.toFixed(0)})`);
+
+  // LOCAL_ADSB and API use the same projector (home-relative geo projection).
+  // A typical LOCAL_ADSB aircraft (real lat/lon) within range must project on canvas.
+  const localAcLat = home.lat + 0.2, localAcLon = home.lon + 0.2; // ~17nm NE
+  const localPt = project(localAcLat, localAcLon);
+  check(localPt.x > -tolerance && localPt.x < W + tolerance &&
+        localPt.y > -tolerance && localPt.y < H + tolerance,
+    `projection: LOCAL_ADSB aircraft within range projects on canvas (x=${localPt.x.toFixed(0)}, y=${localPt.y.toFixed(0)})`);
+
+  // ── Projector Clean Sky only hides radar overlay, not aircraft ───────────────
+  const cleanSkyOverlay = getRadarOverlay({ display: { radar: RADAR_OVERLAY_CLEAN_SKY } });
+  check(!cleanSkyOverlay.rings && !cleanSkyOverlay.compass,
+    'Projector Clean Sky: radar overlay hidden');
+  const projMc = getModeConfig('projector', 1, {});
+  check(projMc.aircraft > 0,
+    `Projector Clean Sky: aircraft alpha still > 0 in projector mode (got ${projMc.aircraft})`);
+  // The projector mode getModeConfig does not have a "hide aircraft" flag.
+  check(!projMc.isCalibration,
+    'Projector Clean Sky: projector mode is not calibration mode (aircraft draw)');
 }
 
 // ---------------------------------------------------------------------------
@@ -1217,5 +1322,6 @@ await recoveryAndCalibrationTests();
 await radarOverlayTests();
 await homeAndMoonTests();
 await celestialBrightnessAndCalibrationTests();
+await aircraftVisibilityTests();
 console.log(failed ? '\nSMOKE CHECK FAILED' : '\nSMOKE CHECK PASSED');
 process.exit(failed ? 1 : 0);

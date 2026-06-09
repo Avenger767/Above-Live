@@ -343,6 +343,10 @@ function draw(ctx, st, props, dt, nowMs) {
   // objects (satellites / Starlink / ISS), then weather wash. The aircraft block
   // below draws after all of these, guaranteeing aircraft glyphs/labels are
   // never covered by the Sun, Moon, planets, satellites or their glow.
+  //
+  // `size` must be defined here (before the aircraft block that normally holds it)
+  // because drawOptionalLayers uses it to scale satellite/ISS glyph sizes.
+  const size = 14 * (settings.display.aircraftSize ?? 1);
   drawOptionalLayers(ctx, settings, mc, ld, theme, projectOrbital, w, h, size, {
     center,
     radiusPx,
@@ -354,7 +358,7 @@ function draw(ctx, st, props, dt, nowMs) {
   const altColorOn = settings.display.altitudeColor !== false;
   const highlightEmergency = settings.display.highlightEmergency !== false;
   const baseRgb = parseColorToRgb(theme.aircraft);
-  const size = 14 * (settings.display.aircraftSize ?? 1);
+  // `size` already defined above (needed before drawOptionalLayers to avoid TDZ).
   const showLabels = settings.display.labels !== false;
   const showTrails = settings.display.trails !== false;
   const renderTime = now - renderDelayMs(effSettings);
