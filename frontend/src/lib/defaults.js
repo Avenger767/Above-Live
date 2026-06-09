@@ -21,6 +21,7 @@ export const DEFAULT_SETTINGS = {
     glyphDebug: false,          // show typeCode + glyph class under each callsign
     spaceLabels: 'major',       // 'off' | 'major' (Sun/Moon/ISS) | 'all'
     showMoonPath: true,         // show Moon's daily arc across the sky dome
+    runwayLabels: 'airport',    // 'off' | 'airport' | 'airportRunway'
     // Radar/compass overlay visibility (object layers are unaffected). Turn
     // these off for a clean live-sky / projector look.
     radar: { rings: true, compass: true, nmLabels: true, crosshair: true },
@@ -43,10 +44,10 @@ export const DEFAULT_SETTINGS = {
   localAdsb: { url: 'http://localhost:8080/data.json', path: '', pollIntervalMs: 1000 },
 
   // Optional display layers (aircraft + stars on; the rest off by default).
-  layers: { aircraft: true, weather: false, iss: false, satellites: false, starlink: false, space: false, stars: true },
+  layers: { aircraft: true, weather: false, iss: false, satellites: false, starlink: false, space: false, stars: true, runways: false },
   weather: { provider: 'openmeteo', pollIntervalMs: 300000 },
   iss:        { group: 'stations', cap: 1,  pollIntervalMs: 5000,  tleTtlMs: 21600000 },
   satellites: { group: 'visual',   cap: 60, pollIntervalMs: 5000,  tleTtlMs: 21600000 },
-  starlink:   { group: 'starlink', cap: 25, pollIntervalMs: 8000,  tleTtlMs: 43200000 },
+  starlink:   { group: 'starlink', cap: 25, pollIntervalMs: 8000,  tleTtlMs: 7200000 },
   space: { pollIntervalMs: 60000 },
 };

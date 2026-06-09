@@ -33,17 +33,38 @@ function OrbitalRow({ label, meta }) {
     : m.lastError ? 'error'
     : 'loading';
   const statusClass = m.blocked || (!m.ok && m.lastError) ? 'bad' : m.ok ? 'ok' : '';
+  const cacheAge = m.cacheAgeSeconds != null
+    ? (m.cacheAgeSeconds < 3600 ? `${Math.round(m.cacheAgeSeconds / 60)}m` : `${Math.round(m.cacheAgeSeconds / 3600)}h`)
+    : '—';
   return (
     <>
       <div className="status-row" style={{ marginTop: 8 }}>
         <span className="status-key">{label}</span>
         <span className={`status-val ${statusClass}`}>{statusText}</span>
       </div>
-      {m.blocked ? (
+      {m.sourceUrl && (
         <div className="status-row">
-          <span className="status-key">{label} reason</span>
-          <span className="status-val bad">blocked by source (HTTP 403)</span>
+          <span className="status-key">{label} source</span>
+          <span className="status-val" style={{ maxWidth: '62%', textAlign: 'right', wordBreak: 'break-all', opacity: 0.8 }}>
+            {m.sourceUrl}
+          </span>
         </div>
+      )}
+      {m.blocked ? (
+        <>
+          <div className="status-row">
+            <span className="status-key">{label} reason</span>
+            <span className="status-val bad">blocked (HTTP 403{m.blockedCount > 1 ? ` ×${m.blockedCount}` : ''})</span>
+          </div>
+          <div className="status-row">
+            <span className="status-key">{label} data</span>
+            <span className="status-val">{m.count > 0 ? `cached (${cacheAge} old)` : 'none cached'}</span>
+          </div>
+          <div className="status-row">
+            <span className="status-key">{label} next retry</span>
+            <span className="status-val">{timeUntil(m.nextRetry)}</span>
+          </div>
+        </>
       ) : (
         <>
           <div className="status-row">
@@ -356,6 +377,22 @@ export default function StatusPanel({ status, aircraftCount, connectionMode, set
               )}
             </>
           )}
+        </>
+      )}
+
+      {/* Airport runways — frontend-only layer; counts come from the renderer */}
+      {settings?.layers?.runways && (
+        <>
+          <div className="status-row" style={{ marginTop: 8 }}>
+            <span className="status-key">Runways</span>
+            <span className="status-val ok">
+              {rs.runwaysVisible ?? '—'} visible / {rs.runwaysLoaded ?? '—'} loaded
+            </span>
+          </div>
+          <div className="status-row">
+            <span className="status-key">Runway labels</span>
+            <span className="status-val">{rs.runwayLabels ?? '—'} shown</span>
+          </div>
         </>
       )}
 

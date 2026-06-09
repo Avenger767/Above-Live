@@ -1308,6 +1308,183 @@ async function aircraftVisibilityTests() {
 }
 
 // ---------------------------------------------------------------------------
+// Part O — Starlink robustness: JSON endpoint, User-Agent, cache, TTL, backoff
+// ---------------------------------------------------------------------------
+async function starlinkRobustnessTests() {
+  console.log('\nPart O — Starlink robustness (JSON endpoint, cache, TTL, backoff)');
+  const savedFetch = global.fetch;
+
+  // A couple of Starlink-like GP JSON records (FORMAT=json).
+  const gpRecords = [
+    { OBJECT_NAME: 'STARLINK-1000', NORAD_CAT_ID: 44713, EPOCH: '2026-06-07T00:00:00',
+      MEAN_MOTION: 15.06, ECCENTRICITY: 0.0001, INCLINATION: 53.0, RA_OF_ASC_NODE: 100.0,
+      ARG_OF_PERICENTER: 90.0, MEAN_ANOMALY: 270.0 },
+    { OBJECT_NAME: 'STARLINK-1001', NORAD_CAT_ID: 44714, EPOCH: '2026-06-07T00:00:00',
+      MEAN_MOTION: 15.06, ECCENTRICITY: 0.0001, INCLINATION: 53.0, RA_OF_ASC_NODE: 120.0,
+      ARG_OF_PERICENTER: 90.0, MEAN_ANOMALY: 200.0 },
+  ];
+
+  let mode = 'ok';      // 'ok' | '403'
+  let fetchCount = 0;
+  let lastUrl = null;
+  let lastUA = null;
+  global.fetch = async (url, opts) => {
+    fetchCount++;
+    lastUrl = String(url);
+    lastUA = opts?.headers?.['User-Agent'] || null;
+    if (mode === '403') return { ok: false, status: 403, json: async () => [], text: async () => '' };
+    if (lastUrl.includes('FORMAT=json')) {
+      return { ok: true, status: 200, json: async () => gpRecords, text: async () => '' };
+    }
+    return { ok: true, status: 200, text: async () => '', json: async () => [] };
+  };
+
+  try {
+    const { createOrbitalLayer } = await import('../backend/layers/orbitalLayer.js');
+    const home = { lat: 32.7767, lon: -96.797 };
+
+    // ── Modern GP JSON endpoint + User-Agent (default 2h TTL) ────────────────
+    {
+      const starlink = createOrbitalLayer('starlink');
+      const s = { home, layers: { starlink: true } };
+      mode = 'ok';
+      await starlink.refresh(s);
+      check(lastUrl.includes('GROUP=starlink') && lastUrl.includes('FORMAT=json'),
+        `Starlink: uses modern GP JSON endpoint (got ${lastUrl})`);
+      check(lastUA && lastUA.includes('AboveLive'),
+        `Starlink: sends a descriptive User-Agent (got "${lastUA}")`);
+      check(starlink.getData().length >= 1,
+        `Starlink: GP JSON records propagate + render (got ${starlink.getData().length})`);
+
+      const m = starlink.getMeta(s);
+      check(m.ttlMs === 7200000, `Starlink: min refresh interval is 2h (got ${m.ttlMs}ms)`);
+      check(m.sourceUrl && m.sourceUrl.includes('celestrak.org'),
+        'Starlink: meta exposes source URL');
+      check('nextRetry' in m && 'cacheAgeSeconds' in m && 'blockedCount' in m,
+        'Starlink: meta exposes nextRetry / cacheAgeSeconds / blockedCount');
+
+      // ── 2h TTL gate: an immediate second refresh must NOT refetch ──────────
+      const before = fetchCount;
+      await starlink.refresh(s);
+      check(fetchCount === before, `Starlink: respects TTL — no refetch while fresh (fetches ${fetchCount})`);
+    }
+
+    // ── Cache is served while blocked (403 does not wipe cached data) ─────────
+    {
+      const starlink = createOrbitalLayer('starlink');
+      // Tiny TTL so the second refresh is allowed to re-attempt the fetch.
+      const sFast = { home, layers: { starlink: true }, starlink: { tleTtlMs: 1 } };
+      mode = 'ok';
+      await starlink.refresh(sFast);
+      const cachedCount = starlink.getData().length;
+      check(cachedCount >= 1, `Starlink: cache populated before block (got ${cachedCount})`);
+
+      await wait(8);
+      mode = '403';
+      await starlink.refresh(sFast);
+      const m = starlink.getMeta(sFast);
+      check(m.blocked === true, 'Starlink: 403 marks layer blocked');
+      check(m.blockedCount === 1, `Starlink: first 403 → blockedCount 1 (got ${m.blockedCount})`);
+      check(m.nextRetry && m.nextRetry > Date.now(), 'Starlink: 403 sets a future next-retry (no retry spam)');
+      check(starlink.getData().length >= 1, 'Starlink: cached data still served while blocked');
+      check(m.lastError && m.lastError.includes('403'), 'Starlink: lastError reports 403');
+    }
+
+    // ── Failure isolation: a Starlink 403 never touches ISS ───────────────────
+    {
+      const starlink = createOrbitalLayer('starlink');
+      const iss = createOrbitalLayer('iss');
+      const s = { home, layers: { starlink: true, iss: true } };
+      mode = '403';
+      await starlink.refresh(s);
+      mode = 'ok'; // ISS group will get a 200 TLE (empty) — but not blocked regardless
+      await iss.refresh(s);
+      check(starlink.getMeta(s).blocked === true, 'Starlink isolation: starlink blocked');
+      check(iss.getMeta(s).blocked !== true, 'Starlink isolation: ISS NOT blocked by starlink 403');
+    }
+  } finally {
+    global.fetch = savedFetch;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Part P — airport runway layer (local dataset, no network)
+// ---------------------------------------------------------------------------
+async function runwayLayerTests() {
+  console.log('\nPart P — airport runway layer (local dataset, no network)');
+
+  const { AIRPORTS, runwayEndpoints, airportDistanceNm } = await import('../frontend/src/lib/airports.js');
+  const store = await import('../backend/settings/settingsStore.js');
+  const { DEFAULT_SETTINGS: FE_DEFAULTS } = await import('../frontend/src/lib/defaults.js');
+
+  // ── Layer defaults to OFF on both sides ──────────────────────────────────────
+  check(store.DEFAULT_SETTINGS.layers.runways === false, 'runways: backend default OFF');
+  check(FE_DEFAULTS.layers.runways === false, 'runways: frontend default OFF');
+  check(store.DEFAULT_SETTINGS.display.runwayLabels === 'airport', 'runways: default label mode = airport');
+  check(FE_DEFAULTS.display.runwayLabels === 'airport', 'runways: frontend default label mode = airport');
+
+  // ── Starter dataset covers the Dallas-area airports requested ─────────────────
+  const codes = new Set(AIRPORTS.map((a) => a.icao));
+  for (const icao of ['KDFW', 'KDAL', 'KADS', 'KGKY', 'KRBD', 'KAFW', 'KFTW', 'KTKI']) {
+    check(codes.has(icao), `runways: dataset includes ${icao}`);
+  }
+
+  // ── Each airport / runway has the required fields ─────────────────────────────
+  let allWellFormed = true;
+  for (const ap of AIRPORTS) {
+    if (typeof ap.icao !== 'string' || typeof ap.name !== 'string') allWellFormed = false;
+    if (!Number.isFinite(ap.lat) || !Number.isFinite(ap.lon)) allWellFormed = false;
+    if (!Array.isArray(ap.runways) || ap.runways.length === 0) allWellFormed = false;
+    for (const rw of ap.runways || []) {
+      if (typeof rw.id !== 'string') allWellFormed = false;
+      if (!Number.isFinite(rw.headingDeg) || !Number.isFinite(rw.lengthFt)) allWellFormed = false;
+    }
+  }
+  check(allWellFormed, 'runways: every airport/runway has icao/name/lat/lon/id/heading/length');
+
+  // ── runwayEndpoints geometry: symmetric about center, length ≈ runway length ──
+  const kdfw = AIRPORTS.find((a) => a.icao === 'KDFW');
+  const rw = kdfw.runways[0];
+  const e = runwayEndpoints(kdfw, rw);
+  check(['lat1', 'lon1', 'lat2', 'lon2'].every((k) => Number.isFinite(e[k])),
+    'runways: runwayEndpoints returns finite endpoints');
+  // Midpoint of endpoints ≈ airport reference (symmetric).
+  const midLat = (e.lat1 + e.lat2) / 2, midLon = (e.lon1 + e.lon2) / 2;
+  check(Math.abs(midLat - kdfw.lat) < 1e-9 && Math.abs(midLon - kdfw.lon) < 1e-9,
+    'runways: endpoints are symmetric about the airport reference');
+  // Endpoint separation ≈ runway length (within 2%).
+  const cosLat = Math.cos((kdfw.lat * Math.PI) / 180);
+  const dNorthNm = (e.lat1 - e.lat2) * 60;
+  const dEastNm = (e.lon1 - e.lon2) * 60 * cosLat;
+  const lenNm = Math.hypot(dNorthNm, dEastNm);
+  const expectNm = rw.lengthFt / 6076.12;
+  check(Math.abs(lenNm - expectNm) / expectNm < 0.02,
+    `runways: endpoint span ≈ runway length (got ${lenNm.toFixed(2)}nm, want ${expectNm.toFixed(2)}nm)`);
+
+  // ── Distance/culling helper: nearby small, far larger ─────────────────────────
+  const home = store.DEFAULT_SETTINGS.home; // Dallas
+  const dDal = airportDistanceNm(AIRPORTS.find((a) => a.icao === 'KDAL'), home);
+  const dTki = airportDistanceNm(AIRPORTS.find((a) => a.icao === 'KTKI'), home);
+  check(dDal >= 0 && dDal < 15, `runways: KDAL is near home (got ${dDal.toFixed(1)}nm)`);
+  check(dTki > dDal, `runways: KTKI is farther than KDAL (${dTki.toFixed(1)} > ${dDal.toFixed(1)})`);
+
+  // ── Renderer wiring: runways draw before aircraft, never gate aircraft ────────
+  {
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    const url = await import('node:url');
+    const here = path.dirname(url.fileURLToPath(import.meta.url));
+    const src = await fs.readFile(path.join(here, '..', 'frontend', 'src', 'components', 'SkyRenderer.jsx'), 'utf8');
+    const rwCallIdx = src.indexOf('drawRunways(ctx');
+    const acIdx = src.indexOf('--- Aircraft (motion-interpolated) ---');
+    check(rwCallIdx > 0 && acIdx > 0 && rwCallIdx < acIdx,
+      'runways: drawn before the aircraft block (aircraft paint on top)');
+    check(/if \(!layers\.runways/.test(src),
+      'runways: render is guarded by the layers.runways toggle (off = no-op)');
+  }
+}
+
+// ---------------------------------------------------------------------------
 console.log(`Above Live — smoke check (port ${PORT})`);
 await integrationTests();
 await unitTests();
@@ -1323,5 +1500,7 @@ await radarOverlayTests();
 await homeAndMoonTests();
 await celestialBrightnessAndCalibrationTests();
 await aircraftVisibilityTests();
+await starlinkRobustnessTests();
+await runwayLayerTests();
 console.log(failed ? '\nSMOKE CHECK FAILED' : '\nSMOKE CHECK PASSED');
 process.exit(failed ? 1 : 0);

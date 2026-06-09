@@ -42,6 +42,7 @@ import {
   CELESTIAL_COLORS,
 } from '../lib/layerSymbols.js';
 import { WeatherCard, SpaceCard } from './LayerCards.jsx';
+import { AIRPORTS, runwayEndpoints, airportDistanceNm } from '../lib/airports.js';
 import {
   updateAircraftTracks,
   sampleAircraftTrack,
@@ -354,6 +355,11 @@ function draw(ctx, st, props, dt, nowMs) {
     celestialBrightness: getCelestialBrightness(settings),
   });
 
+  // --- Airport runways (local dataset; uses the aircraft projector so they
+  // stay geographically aligned with aircraft). Drawn before aircraft so the
+  // aircraft glyphs/labels always paint on top. ---
+  const runwayStats = drawRunways(ctx, settings, mc, project, w, h, rangeNm, settings.home, theme);
+
   // --- Aircraft (motion-interpolated) ---
   const altColorOn = settings.display.altitudeColor !== false;
   const highlightEmergency = settings.display.highlightEmergency !== false;
@@ -507,6 +513,9 @@ function draw(ctx, st, props, dt, nowMs) {
       renderedCount: visible.length,
       trailWindowSec: Math.round(trailWindowMs / 1000),
       trailSegmentCap: MAX_TRAIL_SEGMENTS,
+      runwaysLoaded: runwayStats.loaded,
+      runwaysVisible: runwayStats.visible,
+      runwayLabels: runwayStats.labels,
     });
   }
 }
@@ -645,6 +654,86 @@ function getThemeLabelColor(settings) {
 }
 
 // ---------------------------------------------------------------------------
+// Airport runways (local dataset)
+// ---------------------------------------------------------------------------
+// Draws nearby runways as subtle strips using the aircraft projector so they
+// stay geographically aligned with traffic. Culls airports outside the selected
+// range and returns counts for the Status panel. Never overpowers aircraft:
+// thin muted lines, small labels, brightness-aware alpha.
+function drawRunways(ctx, settings, mc, project, w, h, rangeNm, home, theme) {
+  const stats = { loaded: AIRPORTS.length, visible: 0, labels: 0 };
+  const layers = settings.layers || {};
+  if (!layers.runways || !home) return { ...stats, loaded: 0 };
+
+  const labelMode = settings.display?.runwayLabels ?? 'airport';
+  const a = Math.max(0, Math.min(1, 0.6 * (mc.rings || 1))); // subtle, brightness-aware
+  if (a <= 0.01) return stats;
+
+  const margin = 40;
+  const onScreen = (p) => p.x >= -margin && p.x <= w + margin && p.y >= -margin && p.y <= h + margin;
+  const lineColor = theme.runway || 'rgba(130,165,210,1)';
+  const labelColor = theme.runwayLabel || 'rgba(170,200,235,1)';
+
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.shadowBlur = 0;
+
+  for (const ap of AIRPORTS) {
+    // Cull airports outside the selected range (small pad so edge ones show).
+    if (airportDistanceNm(ap, home) > rangeNm * 1.15) continue;
+    const apP = project(ap.lat, ap.lon);
+    if (!onScreen(apP)) continue;
+    stats.visible++;
+
+    // Runway strips.
+    for (const rw of ap.runways) {
+      const e = runwayEndpoints(ap, rw);
+      const p1 = project(e.lat1, e.lon1);
+      const p2 = project(e.lat2, e.lon2);
+      ctx.globalAlpha = a;
+      ctx.strokeStyle = lineColor;
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      ctx.moveTo(p1.x, p1.y);
+      ctx.lineTo(p2.x, p2.y);
+      ctx.stroke();
+      // Thin centerline for a runway-strip feel.
+      ctx.globalAlpha = a * 0.7;
+      ctx.strokeStyle = 'rgba(230,238,250,1)';
+      ctx.lineWidth = 0.6;
+      ctx.beginPath();
+      ctx.moveTo(p1.x, p1.y);
+      ctx.lineTo(p2.x, p2.y);
+      ctx.stroke();
+
+      if (labelMode === 'airportRunway') {
+        ctx.globalAlpha = a * 0.85;
+        ctx.fillStyle = labelColor;
+        ctx.font = `${Math.max(8, (mc.labelDimSize || 10) - 2)}px ui-monospace, Menlo, Consolas, monospace`;
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(rw.id, (p1.x + p2.x) / 2 + 4, (p1.y + p2.y) / 2);
+        stats.labels++;
+      }
+    }
+
+    // Airport code label.
+    if (labelMode !== 'off') {
+      ctx.globalAlpha = Math.min(1, a + 0.2);
+      ctx.fillStyle = labelColor;
+      ctx.font = `bold ${Math.max(9, (mc.labelDimSize || 10))}px ui-monospace, Menlo, Consolas, monospace`;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      ctx.fillText(ap.icao, apP.x + 6, apP.y + 4);
+      stats.labels++;
+    }
+  }
+
+  ctx.restore();
+  return stats;
+}
+
+// ---------------------------------------------------------------------------
 // Optional layers
 // ---------------------------------------------------------------------------
 function drawOptionalLayers(ctx, settings, mc, ld, theme, projectOrbital, w, h, size, geom) {
@@ -730,13 +819,19 @@ function drawOptionalLayers(ctx, settings, mc, ld, theme, projectOrbital, w, h, 
         const color = CELESTIAL_COLORS[body.name] || '#dfe6f0';
         const opts = body.kind === 'moon' ? { phase: moonPhaseData?.phase } : undefined;
         drawSpaceBody(ctx, p.x, p.y, body.name, body.kind, color, bodyAlpha, opts);
-        // 'major' shows Sun + Moon labels; 'all' shows every body.
+        // Celestial labels are independent of aircraft labels: 'major' shows
+        // Sun + Moon, 'all' shows every body (incl. Venus/Mars/Jupiter/Saturn).
+        // They respect the celestial *label* brightness slider (cb.labels) and
+        // never gate the glyph — turning labels off leaves the body visible.
         const isMajorBody = body.kind === 'sun' || body.kind === 'moon';
         const showThisLabel = spaceLabels === 'all' || (spaceLabels === 'major' && isMajorBody);
-        if (showThisLabel) {
+        const labelAlpha = mc.planets * 0.85 * cb.labels;
+        if (showThisLabel && labelAlpha > 0.02) {
           ctx.save();
-          ctx.globalAlpha = mc.planets * 0.8 * cb.labels;
-          ctx.shadowBlur = 0;
+          ctx.globalAlpha = labelAlpha;
+          // Subtle dark halo so the name stays readable over a bright glow.
+          ctx.shadowColor = 'rgba(0,0,0,0.65)';
+          ctx.shadowBlur = 3;
           ctx.textAlign = 'left';
           ctx.textBaseline = 'top';
           ctx.font = `${Math.max(9, mc.labelDimSize - 1)}px ui-monospace, Menlo, Consolas, monospace`;

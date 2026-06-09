@@ -13,15 +13,36 @@
 
 import { parseTleText, parseGpJson, propagateAll } from './lib/orbital.js';
 
-const CELESTRAK_TLE = (group) =>
-  `https://celestrak.org/NORAD/elements/gp.php?GROUP=${encodeURIComponent(group)}&FORMAT=tle`;
+// Modern CelesTrak GP endpoint. FORMAT=json is preferred; FORMAT=tle is the
+// fallback. (Both parse to the same element shape — see lib/orbital.js.)
+const CELESTRAK_GP = (group, format) =>
+  `https://celestrak.org/NORAD/elements/gp.php?GROUP=${encodeURIComponent(group)}&FORMAT=${format}`;
+
+// CelesTrak returns HTTP 403 to agentless / generic clients. A descriptive
+// User-Agent is the single most important fix for "Starlink won't connect".
+const USER_AGENT = 'AboveLive/1.0 (Raspberry Pi sky display; +https://github.com/avenger767/above-live)';
+
+// Fetch formats to try, in order, per layer. Starlink uses the modern GP JSON
+// endpoint first with a TLE fallback; ISS/satellites keep their existing TLE
+// behavior unchanged (guardrail: do not change ISS/satellite data sources).
+const FORMATS = {
+  starlink: ['json', 'tle'],
+};
+const formatsFor = (key) => FORMATS[key] || ['tle'];
 
 // Sensible defaults per layer (overridable via settings[key]).
 const DEFAULTS = {
   iss:        { group: 'stations', cap: 1,  satFilter: [25544], tleTtlMs: 6 * 3600_000, pollIntervalMs: 5000 },
   satellites: { group: 'visual',   cap: 60, satFilter: null,    tleTtlMs: 6 * 3600_000, pollIntervalMs: 5000 },
-  starlink:   { group: 'starlink', cap: 25, satFilter: null,    tleTtlMs: 12 * 3600_000, pollIntervalMs: 8000 },
+  // Starlink GP data updates ~every 2 h; refetch no more often than every 2 h.
+  starlink:   { group: 'starlink', cap: 25, satFilter: null,    tleTtlMs: 2 * 3600_000, pollIntervalMs: 8000 },
 };
+
+// Backoff windows after a source error.
+const BACKOFF_403_FIRST_MS    = 6 * 3600_000;   // first 403: back off 6 h
+const BACKOFF_403_REPEATED_MS = 24 * 3600_000;  // repeated 403s: back off 24 h
+const BACKOFF_429_MS          = 30 * 60_000;    // rate limited: 30 min
+const BACKOFF_ERROR_MS        = 5 * 60_000;     // transient error: 5 min
 
 export function createOrbitalLayer(key) {
   const name = key;
@@ -36,7 +57,9 @@ export function createOrbitalLayer(key) {
   let lastError = null;     // last error message (fetch or parse)
   let backoffUntil = 0;     // don't re-attempt TLE download before this
   let lastPropagateAt = 0;
-  let blocked = false;      // true when CelesTrak returned HTTP 403 (permanent block)
+  let blocked = false;      // true when CelesTrak returned HTTP 403
+  let blockedCount = 0;     // consecutive 403s (drives escalating backoff)
+  let lastSourceUrl = CELESTRAK_GP(def.group, formatsFor(key)[0]); // most recent / intended source URL
 
   // ── settings helpers ───────────────────────────────────────────────────────
   const cfg = (s) => (s && s[key]) || {};
@@ -49,28 +72,55 @@ export function createOrbitalLayer(key) {
     return Array.isArray(f) && f.length ? new Set(f.map(Number)) : null;
   };
 
-  // ── TLE download (rare) ────────────────────────────────────────────────────
-  async function fetchTle(s) {
-    const url = CELESTRAK_TLE(group(s));
-    const res = await fetch(url, {
-      headers: { Accept: 'text/plain' },
-      signal: AbortSignal.timeout(10000),
-    });
-    if (res.status === 403) {
-      const err = new Error('Blocked by source (HTTP 403)');
-      err.blocked = true;
-      throw err;
+  // ── Element download (rare) ─────────────────────────────────────────────────
+  // Try each configured format in order (Starlink: JSON → TLE; others: TLE).
+  // A 403/429 is a source-level signal and aborts immediately (no point trying
+  // the next format against the same blocked source); other errors fall through
+  // to the next format before giving up.
+  async function fetchElements(s) {
+    const formats = formatsFor(key);
+    let lastErr = null;
+    for (const fmt of formats) {
+      const url = CELESTRAK_GP(group(s), fmt);
+      lastSourceUrl = url;
+      try {
+        const res = await fetch(url, {
+          headers: {
+            'User-Agent': USER_AGENT,
+            Accept: fmt === 'json' ? 'application/json' : 'text/plain',
+          },
+          signal: AbortSignal.timeout(10000),
+        });
+        if (res.status === 403) {
+          const err = new Error('Blocked by source (HTTP 403)');
+          err.blocked = true;
+          throw err;
+        }
+        if (res.status === 429) {
+          const err = new Error('HTTP 429 (CelesTrak rate limited)');
+          err.rateLimited = true;
+          throw err;
+        }
+        if (!res.ok) throw new Error(`HTTP ${res.status} from CelesTrak`);
+
+        let parsed;
+        if (fmt === 'json') {
+          const data = await res.json();
+          parsed = parseGpJson(data);
+        } else {
+          const text = await res.text();
+          parsed = parseTleText(text);
+        }
+        if (parsed.length === 0) throw new Error(`CelesTrak returned no usable elements (${fmt})`);
+        return parsed;
+      } catch (err) {
+        lastErr = err;
+        // Source-level blocks/limits: stop, let the caller apply backoff.
+        if (err.blocked || err.rateLimited) throw err;
+        // Otherwise try the next format (if any).
+      }
     }
-    if (res.status === 429) {
-      const err = new Error('HTTP 429 (CelesTrak rate limited)');
-      err.rateLimited = true;
-      throw err;
-    }
-    if (!res.ok) throw new Error(`HTTP ${res.status} from CelesTrak`);
-    const text = await res.text();
-    const parsed = parseTleText(text);
-    if (parsed.length === 0) throw new Error('CelesTrak returned no usable TLEs');
-    return parsed;
+    throw lastErr || new Error('No elements fetched');
   }
 
   // Ensure TLEs are present + fresh. Gated by TTL + backoff so it costs nothing
@@ -79,26 +129,31 @@ export function createOrbitalLayer(key) {
     const fresh = elements.length > 0 && now - tleFetchedAt < tleTtlMs(s);
     if (fresh || now < backoffUntil) return;
     try {
-      elements = await fetchTle(s);
+      elements = await fetchElements(s);
       tleFetchedAt = Date.now();
       tleCount = elements.length;
       lastError = null;
       backoffUntil = 0;
       blocked = false;
-      console.log(`[${key}] TLE refreshed — ${tleCount} objects (group ${group(s)})`);
+      blockedCount = 0;
+      console.log(`[${key}] elements refreshed — ${tleCount} objects (group ${group(s)})`);
     } catch (err) {
       lastError = err.message;
       if (err.blocked) {
-        // HTTP 403: source has permanently blocked this group; back off 24 h.
+        // HTTP 403: source blocked this group. Don't spam — back off 6 h on the
+        // first 403, escalating to 24 h on repeated 403s. Cached data keeps
+        // rendering meanwhile.
         blocked = true;
-        backoffUntil = Date.now() + 24 * 3600_000;
-        console.warn(`[${key}] TLE source blocked (HTTP 403) — retrying in 24 h`);
+        blockedCount += 1;
+        const ms = blockedCount >= 2 ? BACKOFF_403_REPEATED_MS : BACKOFF_403_FIRST_MS;
+        backoffUntil = Date.now() + ms;
+        console.warn(`[${key}] source blocked (HTTP 403, #${blockedCount}) — retrying in ${Math.round(ms / 3600_000)} h`);
       } else if (err.rateLimited) {
-        backoffUntil = Date.now() + 30 * 60_000;
-        console.warn(`[${key}] TLE fetch rate-limited: ${err.message} (keeping cached elements)`);
+        backoffUntil = Date.now() + BACKOFF_429_MS;
+        console.warn(`[${key}] fetch rate-limited: ${err.message} (keeping cached elements)`);
       } else {
-        backoffUntil = Date.now() + 5 * 60_000;
-        console.warn(`[${key}] TLE fetch failed: ${err.message} (keeping cached elements)`);
+        backoffUntil = Date.now() + BACKOFF_ERROR_MS;
+        console.warn(`[${key}] fetch failed: ${err.message} (keeping cached elements)`);
       }
     }
   }
@@ -146,16 +201,21 @@ export function createOrbitalLayer(key) {
       cap: cap(s),
       tleCount,                            // element sets cached
       tleAgeSeconds: tleFetchedAt ? Math.round((now - tleFetchedAt) / 1000) : null,
+      cacheAgeSeconds: lastSuccess ? Math.round((now - lastSuccess) / 1000) : null,
       lastSuccess: lastSuccess || null,    // last propagate
       lastTleFetch: tleFetchedAt || null,
       lastError,
       blocked,                             // true when HTTP 403 received
+      blockedCount,                        // consecutive 403s
+      sourceUrl: lastSourceUrl,            // most recent / intended fetch URL
+      nextRetry: backoffUntil || null,     // ts when a re-fetch is next allowed
+      ttlMs: tleTtlMs(s),                  // minimum time between refetches
       pollIntervalMs: pollIntervalMs(s),
     };
   }
 
   function invalidate() {
-    // Force a TLE re-fetch + reseed on the next refresh (e.g. group changed).
+    // Force an element re-fetch + reseed on the next refresh (e.g. group changed).
     elements = [];
     tleFetchedAt = 0;
     tleCount = 0;
@@ -163,12 +223,13 @@ export function createOrbitalLayer(key) {
     backoffUntil = 0;
     lastPropagateAt = 0;
     blocked = false;
+    blockedCount = 0;
   }
 
   // Manual one-shot test for /api/provider-test-style debugging.
   async function test(s) {
     try {
-      const els = await fetchTle(s);
+      const els = await fetchElements(s);
       elements = els;
       tleFetchedAt = Date.now();
       tleCount = els.length;

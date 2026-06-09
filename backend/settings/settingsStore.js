@@ -37,6 +37,8 @@ export const DEFAULT_SETTINGS = {
     spaceLabels: 'major',
     // Show Moon's daily arc across the sky dome (when space layer is enabled).
     showMoonPath: true,
+    // Airport runway label visibility: 'off' | 'airport' | 'airportRunway'.
+    runwayLabels: 'airport',
     // Radar/compass overlay visibility. Each element can be hidden independently
     // for a clean live-sky / projector look; object layers are unaffected.
     radar: { rings: true, compass: true, nmLabels: true, crosshair: true },
@@ -83,6 +85,7 @@ export const DEFAULT_SETTINGS = {
     starlink: false,
     space: false,        // sun / moon / planets
     stars: true,
+    runways: false,      // nearby airport runways (local dataset, no network)
   },
 
   // Per-layer config (only used when the matching layer is enabled).
@@ -92,7 +95,7 @@ export const DEFAULT_SETTINGS = {
   // pollIntervalMs is the LOCAL propagation cadence (no network).
   iss:        { group: 'stations', cap: 1,  pollIntervalMs: 5000,  tleTtlMs: 21600000 },
   satellites: { group: 'visual',   cap: 60, pollIntervalMs: 5000,  tleTtlMs: 21600000 },
-  starlink:   { group: 'starlink', cap: 25, pollIntervalMs: 8000,  tleTtlMs: 43200000 },
+  starlink:   { group: 'starlink', cap: 25, pollIntervalMs: 8000,  tleTtlMs: 7200000 },
   space: { pollIntervalMs: 60000 }, // sun/moon/planets recompute (1 min)
 };
 

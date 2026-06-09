@@ -20,6 +20,7 @@ const LAYER_TOGGLES = [
   { key: 'satellites', label: 'Satellites' },
   { key: 'starlink', label: 'Starlink' },
   { key: 'space', label: 'Planets / Moon / Sun' },
+  { key: 'runways', label: 'Airport runways' },
   { key: 'weather', label: 'Weather' },
 ];
 
@@ -337,16 +338,33 @@ export default function ControlPanel({ settings, onChange, onHomeChange, onToggl
       <p className="field-hint">Shows type code and glyph class below each callsign.</p>
 
       <label className="field">
-        <span>Space labels</span>
+        <span>Celestial labels</span>
         <select
           value={d.spaceLabels || 'major'}
           onChange={(e) => setDisplay({ spaceLabels: e.target.value })}
         >
           <option value="off">Off</option>
-          <option value="major">Major (Sun, Moon, ISS)</option>
-          <option value="all">All objects</option>
+          <option value="major">Major (Sun, Moon)</option>
+          <option value="all">All (planets too)</option>
         </select>
       </label>
+      <p className="field-hint">
+        Names for the Sun, Moon and planets. Independent of aircraft labels;
+        turning labels off does not hide the glyphs.
+      </p>
+
+      <label className="field">
+        <span>Runway labels</span>
+        <select
+          value={d.runwayLabels || 'airport'}
+          onChange={(e) => setDisplay({ runwayLabels: e.target.value })}
+        >
+          <option value="off">Off</option>
+          <option value="airport">Airport code</option>
+          <option value="airportRunway">Airport + runway</option>
+        </select>
+      </label>
+      <p className="field-hint">Labels for the Airport runways layer (when enabled).</p>
 
       <label className="field toggle">
         <span>Moon path arc</span>
