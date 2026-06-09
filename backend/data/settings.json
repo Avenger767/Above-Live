@@ -14,12 +14,29 @@
     "labels": true,
     "trails": true,
     "aircraftSize": 1,
+    "displayMode": "normal",
+    "brightnessMap": {},
     "maxFps": 30,
     "altitudeColor": true,
     "labelDensity": "nearestN",
     "nearestN": 5,
     "labelRotationDeg": 0,
-    "highlightEmergency": true
+    "highlightEmergency": true,
+    "glyphDebug": false,
+    "spaceLabels": "major",
+    "showMoonPath": true,
+    "radar": {
+      "rings": true,
+      "compass": true,
+      "nmLabels": true,
+      "crosshair": true
+    },
+    "celestialBrightness": {
+      "sun": 1,
+      "moon": 1,
+      "planets": 1,
+      "labels": 1
+    }
   },
   "calibration": {
     "offsetX": 0,
@@ -27,7 +44,17 @@
     "scale": 1,
     "rotation": 0,
     "flipH": false,
-    "flipV": false
+    "flipV": false,
+    "aircraft": {
+      "scale": 1,
+      "offsetX": 0,
+      "offsetY": 0
+    },
+    "celestial": {
+      "scale": 1,
+      "offsetX": 0,
+      "offsetY": 0
+    }
   },
   "motion": {
     "interpolate": true,
