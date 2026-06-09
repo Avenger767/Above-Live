@@ -361,10 +361,20 @@ export default function ControlPanel({ settings, onChange, onHomeChange, onToggl
         >
           <option value="off">Off</option>
           <option value="airport">Airport code</option>
-          <option value="airportRunway">Airport + runway</option>
+          <option value="airportRunway">Airport + runway numbers</option>
         </select>
       </label>
-      <p className="field-hint">Labels for the Airport runways layer (when enabled).</p>
+      <p className="field-hint">Labels for the Airport runways layer (when enabled). Runway numbers appear only when the strips are large enough to read.</p>
+
+      <label className="field">
+        <span>Runway brightness ({Math.round((d.runwayBrightness ?? 0.45) * 100)}%)</span>
+        <input
+          type="range" min="0" max="1" step="0.05"
+          value={d.runwayBrightness ?? 0.45}
+          onChange={(e) => setDisplay({ runwayBrightness: Number(e.target.value) })}
+        />
+      </label>
+      <p className="field-hint">Amber strip brightness. 0% hides runways; does not affect aircraft or celestial objects.</p>
 
       <label className="field toggle">
         <span>Moon path arc</span>

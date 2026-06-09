@@ -55,6 +55,15 @@ export function getCelestialBrightness(settings) {
   };
 }
 
+// Resolve runway brightness (0..1) from settings, clamped safe.
+// Default 0.45 keeps runways subtle so they never overpower aircraft.
+export function getRunwayBrightness(settings) {
+  const v = settings?.display?.runwayBrightness;
+  const n = Number(v);
+  if (!Number.isFinite(n)) return 0.45;
+  return Math.max(0, Math.min(1, n));
+}
+
 // Returns a render-config object for the draw loop.
 //   mode        — one of the DISPLAY_MODE_KEYS
 //   brightness  — master brightness slider [0..1]

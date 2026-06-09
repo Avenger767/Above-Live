@@ -13,7 +13,7 @@
 
 import React, { useEffect, useRef } from 'react';
 import { getTheme } from '../lib/themes.js';
-import { getModeConfig, getRadarOverlay, getCelestialBrightness } from '../lib/displayModes.js';
+import { getModeConfig, getRadarOverlay, getCelestialBrightness, getRunwayBrightness } from '../lib/displayModes.js';
 import {
   makeProjector,
   makeSkyProjector,
@@ -42,7 +42,7 @@ import {
   CELESTIAL_COLORS,
 } from '../lib/layerSymbols.js';
 import { WeatherCard, SpaceCard } from './LayerCards.jsx';
-import { AIRPORTS, runwayEndpoints, airportDistanceNm } from '../lib/airports.js';
+import { AIRPORTS, runwayEndpoints, runwayHeadingDeg, airportDistanceNm, RUNWAY_DATASET_STATS } from '../lib/airports.js';
 import {
   updateAircraftTracks,
   sampleAircraftTrack,
@@ -516,6 +516,10 @@ function draw(ctx, st, props, dt, nowMs) {
       runwaysLoaded: runwayStats.loaded,
       runwaysVisible: runwayStats.visible,
       runwayLabels: runwayStats.labels,
+      runwayDatasetAirports: RUNWAY_DATASET_STATS.airports,
+      runwayDatasetTotal: RUNWAY_DATASET_STATS.total,
+      runwayDatasetApprox: RUNWAY_DATASET_STATS.approx,
+      runwayDatasetExact: RUNWAY_DATASET_STATS.exact,
     });
   }
 }
@@ -656,75 +660,142 @@ function getThemeLabelColor(settings) {
 // ---------------------------------------------------------------------------
 // Airport runways (local dataset)
 // ---------------------------------------------------------------------------
-// Draws nearby runways as subtle strips using the aircraft projector so they
-// stay geographically aligned with traffic. Culls airports outside the selected
-// range and returns counts for the Status panel. Never overpowers aircraft:
-// thin muted lines, small labels, brightness-aware alpha.
+// Draws nearby runways as amber/yellow outlined rectangle strips using the
+// aircraft projector so they stay geographically aligned with traffic. Each
+// strip shows: filled dark amber interior, outlined edges, dashed centerline,
+// and (when large enough) runway number labels at each threshold. Culls
+// airports outside range and returns counts for the Status panel. Aircraft
+// always paint on top (this is called before the aircraft block).
 function drawRunways(ctx, settings, mc, project, w, h, rangeNm, home, theme) {
-  const stats = { loaded: AIRPORTS.length, visible: 0, labels: 0 };
+  const stats = { loaded: AIRPORT_TOTAL, visible: 0, labels: 0 };
   const layers = settings.layers || {};
   if (!layers.runways || !home) return { ...stats, loaded: 0 };
 
-  const labelMode = settings.display?.runwayLabels ?? 'airport';
-  const a = Math.max(0, Math.min(1, 0.6 * (mc.rings || 1))); // subtle, brightness-aware
+  const rb = getRunwayBrightness(settings);
+  // Runway brightness multiplied by mode alpha so projector/ambient modes are
+  // respected. mc.rings carries the display-mode alpha for overlay elements.
+  const a = rb * Math.max(0, Math.min(1, mc.rings || 1));
   if (a <= 0.01) return stats;
 
-  const margin = 40;
+  const labelMode = settings.display?.runwayLabels ?? 'airport';
+
+  // Amber/yellow — similar to the lowest-altitude aircraft colour ramp.
+  const AMBER_CSS = 'rgba(255,195,50,1)';
+  const margin = 60;
   const onScreen = (p) => p.x >= -margin && p.x <= w + margin && p.y >= -margin && p.y <= h + margin;
-  const lineColor = theme.runway || 'rgba(130,165,210,1)';
-  const labelColor = theme.runwayLabel || 'rgba(170,200,235,1)';
+
+  // Pixels per nautical mile for width computation.
+  const radiusPx = Math.min(w, h) / 2 - Math.min(w, h) * 0.06;
+  const pxPerNm = radiusPx / rangeNm;
 
   ctx.save();
-  ctx.lineCap = 'round';
   ctx.shadowBlur = 0;
 
   for (const ap of AIRPORTS) {
-    // Cull airports outside the selected range (small pad so edge ones show).
     if (airportDistanceNm(ap, home) > rangeNm * 1.15) continue;
     const apP = project(ap.lat, ap.lon);
     if (!onScreen(apP)) continue;
     stats.visible++;
 
-    // Runway strips.
     for (const rw of ap.runways) {
       const e = runwayEndpoints(ap, rw);
-      const p1 = project(e.lat1, e.lon1);
-      const p2 = project(e.lat2, e.lon2);
-      ctx.globalAlpha = a;
-      ctx.strokeStyle = lineColor;
-      ctx.lineWidth = 2.2;
+      const p1 = project(e.lat1, e.lon1); // endA threshold
+      const p2 = project(e.lat2, e.lon2); // endB threshold
+
+      const dx = p2.x - p1.x;
+      const dy = p2.y - p1.y;
+      const pxLen = Math.hypot(dx, dy);
+      if (pxLen < 4) continue; // too small to draw
+
+      // Perpendicular unit vector for the strip width.
+      const perpX =  dy / pxLen;
+      const perpY = -dx / pxLen;
+      const hw = Math.max(1.5, ((rw.widthFt ?? 150) / 6076.12) * pxPerNm / 2);
+
+      // Rectangle corners: p1-left, p1-right, p2-right, p2-left.
+      const cx = [p1.x - perpX * hw, p1.x + perpX * hw, p2.x + perpX * hw, p2.x - perpX * hw];
+      const cy = [p1.y - perpY * hw, p1.y + perpY * hw, p2.y + perpY * hw, p2.y - perpY * hw];
+
+      // Draw filled strip interior.
+      ctx.globalAlpha = a * 0.18;
+      ctx.fillStyle = AMBER_CSS;
       ctx.beginPath();
-      ctx.moveTo(p1.x, p1.y);
-      ctx.lineTo(p2.x, p2.y);
-      ctx.stroke();
-      // Thin centerline for a runway-strip feel.
-      ctx.globalAlpha = a * 0.7;
-      ctx.strokeStyle = 'rgba(230,238,250,1)';
-      ctx.lineWidth = 0.6;
+      ctx.moveTo(cx[0], cy[0]);
+      for (let i = 1; i < 4; i++) ctx.lineTo(cx[i], cy[i]);
+      ctx.closePath();
+      ctx.fill();
+
+      // Draw outlined edges.
+      ctx.globalAlpha = a * 0.9;
+      ctx.strokeStyle = AMBER_CSS;
+      ctx.lineWidth = 1.2;
+      ctx.lineJoin = 'miter';
       ctx.beginPath();
-      ctx.moveTo(p1.x, p1.y);
-      ctx.lineTo(p2.x, p2.y);
+      ctx.moveTo(cx[0], cy[0]);
+      for (let i = 1; i < 4; i++) ctx.lineTo(cx[i], cy[i]);
+      ctx.closePath();
       ctx.stroke();
 
-      if (labelMode === 'airportRunway') {
-        ctx.globalAlpha = a * 0.85;
-        ctx.fillStyle = labelColor;
-        ctx.font = `${Math.max(8, (mc.labelDimSize || 10) - 2)}px ui-monospace, Menlo, Consolas, monospace`;
-        ctx.textAlign = 'left';
+      // Dashed centerline when runway is large enough to read.
+      const showDetail = pxLen >= 20;
+      if (showDetail) {
+        const dashLen = Math.max(4, pxLen / 12);
+        const gapLen  = Math.max(4, pxLen / 10);
+        ctx.globalAlpha = a * 0.55;
+        ctx.strokeStyle = AMBER_CSS;
+        ctx.lineWidth = 0.8;
+        ctx.setLineDash([dashLen, gapLen]);
+        ctx.beginPath();
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      // Runway number labels at each threshold end. Shown only in 'airportRunway'
+      // label mode and only when the strip is large enough (~40 px) to read.
+      if (showDetail && pxLen >= 40 && labelMode === 'airportRunway') {
+        const ang = Math.atan2(dy, dx); // screen angle from endA → endB
+        const lblSize = Math.max(7, Math.min(11, pxLen / 9));
+        const offsetPx = Math.min(16, pxLen * 0.1);
+        const unitX = dx / pxLen;
+        const unitY = dy / pxLen;
+
+        ctx.globalAlpha = a * 0.9;
+        ctx.fillStyle = AMBER_CSS;
+        ctx.font = `bold ${lblSize}px ui-monospace, Menlo, Consolas, monospace`;
+        ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(rw.id, (p1.x + p2.x) / 2 + 4, (p1.y + p2.y) / 2);
-        stats.labels++;
+
+        // endA label: text top points toward endB (up the runway from here).
+        ctx.save();
+        ctx.translate(p1.x + unitX * offsetPx, p1.y + unitY * offsetPx);
+        ctx.rotate(ang + Math.PI / 2);
+        ctx.fillText(rw.endA?.id ?? rw.id.split('/')[0] ?? '', 0, 0);
+        ctx.restore();
+
+        // endB label: text top points toward endA (up the runway from here).
+        ctx.save();
+        ctx.translate(p2.x - unitX * offsetPx, p2.y - unitY * offsetPx);
+        ctx.rotate(ang - Math.PI / 2);
+        ctx.fillText(rw.endB?.id ?? rw.id.split('/')[1] ?? '', 0, 0);
+        ctx.restore();
+
+        stats.labels += 2;
       }
     }
 
-    // Airport code label.
+    // Airport ICAO code label.
     if (labelMode !== 'off') {
-      ctx.globalAlpha = Math.min(1, a + 0.2);
-      ctx.fillStyle = labelColor;
-      ctx.font = `bold ${Math.max(9, (mc.labelDimSize || 10))}px ui-monospace, Menlo, Consolas, monospace`;
+      ctx.globalAlpha = Math.min(1, a + 0.15);
+      ctx.fillStyle = 'rgba(255,210,80,1)';
+      ctx.font = `bold ${Math.max(9, mc.labelDimSize || 10)}px ui-monospace, Menlo, Consolas, monospace`;
+      ctx.shadowColor = 'rgba(0,0,0,0.55)';
+      ctx.shadowBlur = 2;
       ctx.textAlign = 'left';
       ctx.textBaseline = 'top';
       ctx.fillText(ap.icao, apP.x + 6, apP.y + 4);
+      ctx.shadowBlur = 0;
       stats.labels++;
     }
   }
@@ -732,6 +803,9 @@ function drawRunways(ctx, settings, mc, project, w, h, rangeNm, home, theme) {
   ctx.restore();
   return stats;
 }
+
+// Total runway count across the dataset (computed once at module load).
+const AIRPORT_TOTAL = AIRPORTS.reduce((n, ap) => n + ap.runways.length, 0);
 
 // ---------------------------------------------------------------------------
 // Optional layers

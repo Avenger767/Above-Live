@@ -28,11 +28,13 @@ function OrbitalRow({ label, meta }) {
     ? (m.tleAgeSeconds < 3600 ? `${Math.round(m.tleAgeSeconds / 60)}m` : `${Math.round(m.tleAgeSeconds / 3600)}h`)
     : '—';
   const statusText = m.blocked
-    ? 'unavailable'
+    ? (m.count > 0 ? 'cached (backoff)' : 'unavailable')
     : m.ok ? `${m.count}/${m.cap} shown`
     : m.lastError ? 'error'
     : 'loading';
-  const statusClass = m.blocked || (!m.ok && m.lastError) ? 'bad' : m.ok ? 'ok' : '';
+  const statusClass = (m.blocked && m.count === 0) || (!m.ok && m.lastError) ? 'bad'
+    : m.blocked && m.count > 0 ? 'ok'
+    : m.ok ? 'ok' : '';
   const cacheAge = m.cacheAgeSeconds != null
     ? (m.cacheAgeSeconds < 3600 ? `${Math.round(m.cacheAgeSeconds / 60)}m` : `${Math.round(m.cacheAgeSeconds / 3600)}h`)
     : '—';
@@ -386,13 +388,37 @@ export default function StatusPanel({ status, aircraftCount, connectionMode, set
           <div className="status-row" style={{ marginTop: 8 }}>
             <span className="status-key">Runways</span>
             <span className="status-val ok">
-              {rs.runwaysVisible ?? '—'} visible / {rs.runwaysLoaded ?? '—'} loaded
+              {rs.runwaysVisible ?? '—'} airports visible / {rs.runwaysLoaded ?? '—'} strips
             </span>
           </div>
           <div className="status-row">
             <span className="status-key">Runway labels</span>
             <span className="status-val">{rs.runwayLabels ?? '—'} shown</span>
           </div>
+          <div className="status-row">
+            <span className="status-key">Runway brightness</span>
+            <span className="status-val">
+              {Math.round((settings?.display?.runwayBrightness ?? 0.45) * 100)}%
+            </span>
+          </div>
+          {rs.runwayDatasetTotal != null && (
+            <>
+              <div className="status-row">
+                <span className="status-key">Dataset</span>
+                <span className="status-val">
+                  local DFW — {rs.runwayDatasetAirports} airports, {rs.runwayDatasetTotal} strips
+                </span>
+              </div>
+              <div className="status-row">
+                <span className="status-key">Geometry</span>
+                <span className="status-val">
+                  {rs.runwayDatasetExact > 0
+                    ? `${rs.runwayDatasetExact} exact / ${rs.runwayDatasetApprox} approx`
+                    : `${rs.runwayDatasetApprox} approx (center+heading)`}
+                </span>
+              </div>
+            </>
+          )}
         </>
       )}
 

@@ -1413,15 +1413,20 @@ async function starlinkRobustnessTests() {
 async function runwayLayerTests() {
   console.log('\nPart P — airport runway layer (local dataset, no network)');
 
-  const { AIRPORTS, runwayEndpoints, airportDistanceNm } = await import('../frontend/src/lib/airports.js');
+  const { AIRPORTS, runwayEndpoints, runwayHeadingDeg, airportDistanceNm, RUNWAY_DATASET_STATS } =
+    await import('../frontend/src/lib/airports.js');
   const store = await import('../backend/settings/settingsStore.js');
   const { DEFAULT_SETTINGS: FE_DEFAULTS } = await import('../frontend/src/lib/defaults.js');
 
-  // ── Layer defaults to OFF on both sides ──────────────────────────────────────
+  // ── Layer and brightness defaults (both sides) ───────────────────────────────
   check(store.DEFAULT_SETTINGS.layers.runways === false, 'runways: backend default OFF');
   check(FE_DEFAULTS.layers.runways === false, 'runways: frontend default OFF');
   check(store.DEFAULT_SETTINGS.display.runwayLabels === 'airport', 'runways: default label mode = airport');
   check(FE_DEFAULTS.display.runwayLabels === 'airport', 'runways: frontend default label mode = airport');
+  check(store.DEFAULT_SETTINGS.display.runwayBrightness === 0.45,
+    `runways: backend default runwayBrightness = 0.45 (got ${store.DEFAULT_SETTINGS.display.runwayBrightness})`);
+  check(FE_DEFAULTS.display.runwayBrightness === 0.45,
+    `runways: frontend default runwayBrightness = 0.45 (got ${FE_DEFAULTS.display.runwayBrightness})`);
 
   // ── Starter dataset covers the Dallas-area airports requested ─────────────────
   const codes = new Set(AIRPORTS.map((a) => a.icao));
@@ -1429,29 +1434,50 @@ async function runwayLayerTests() {
     check(codes.has(icao), `runways: dataset includes ${icao}`);
   }
 
-  // ── Each airport / runway has the required fields ─────────────────────────────
+  // ── New data structure: each runway has endA/endB with id, lat, lon ───────────
   let allWellFormed = true;
+  let totalRunways = 0;
   for (const ap of AIRPORTS) {
     if (typeof ap.icao !== 'string' || typeof ap.name !== 'string') allWellFormed = false;
     if (!Number.isFinite(ap.lat) || !Number.isFinite(ap.lon)) allWellFormed = false;
     if (!Array.isArray(ap.runways) || ap.runways.length === 0) allWellFormed = false;
     for (const rw of ap.runways || []) {
+      totalRunways++;
       if (typeof rw.id !== 'string') allWellFormed = false;
-      if (!Number.isFinite(rw.headingDeg) || !Number.isFinite(rw.lengthFt)) allWellFormed = false;
+      if (!Number.isFinite(rw.lengthFt)) allWellFormed = false;
+      if (typeof rw.approximate !== 'boolean') allWellFormed = false;
+      if (!rw.endA || !rw.endB) allWellFormed = false;
+      if (typeof rw.endA?.id !== 'string' || typeof rw.endB?.id !== 'string') allWellFormed = false;
+      if (!Number.isFinite(rw.endA?.lat) || !Number.isFinite(rw.endA?.lon)) allWellFormed = false;
+      if (!Number.isFinite(rw.endB?.lat) || !Number.isFinite(rw.endB?.lon)) allWellFormed = false;
     }
   }
-  check(allWellFormed, 'runways: every airport/runway has icao/name/lat/lon/id/heading/length');
+  check(allWellFormed, 'runways: every runway has icao/name/lat/lon + endA/endB{id,lat,lon} + lengthFt + approximate');
+  check(totalRunways > 0, `runways: dataset has runways (count=${totalRunways})`);
 
-  // ── runwayEndpoints geometry: symmetric about center, length ≈ runway length ──
+  // ── RUNWAY_DATASET_STATS is consistent with AIRPORTS data ────────────────────
+  check(RUNWAY_DATASET_STATS.airports === AIRPORTS.length,
+    `runways: RUNWAY_DATASET_STATS.airports matches (got ${RUNWAY_DATASET_STATS.airports})`);
+  check(RUNWAY_DATASET_STATS.total === totalRunways,
+    `runways: RUNWAY_DATASET_STATS.total matches (got ${RUNWAY_DATASET_STATS.total}, want ${totalRunways})`);
+  check(RUNWAY_DATASET_STATS.approx + RUNWAY_DATASET_STATS.exact === RUNWAY_DATASET_STATS.total,
+    'runways: approx + exact = total in RUNWAY_DATASET_STATS');
+
+  // ── runwayEndpoints returns finite values from endA/endB ─────────────────────
   const kdfw = AIRPORTS.find((a) => a.icao === 'KDFW');
-  const rw = kdfw.runways[0];
+  const rw = kdfw.runways[0]; // 17R/35L
   const e = runwayEndpoints(kdfw, rw);
   check(['lat1', 'lon1', 'lat2', 'lon2'].every((k) => Number.isFinite(e[k])),
     'runways: runwayEndpoints returns finite endpoints');
-  // Midpoint of endpoints ≈ airport reference (symmetric).
+  // Endpoints match stored endA/endB directly.
+  check(e.lat1 === rw.endA.lat && e.lon1 === rw.endA.lon,
+    'runways: runwayEndpoints lat1/lon1 = endA coordinates');
+  check(e.lat2 === rw.endB.lat && e.lon2 === rw.endB.lon,
+    'runways: runwayEndpoints lat2/lon2 = endB coordinates');
+  // Midpoint is close to airport reference (within 0.001° — rounding from stored 4-dp values).
   const midLat = (e.lat1 + e.lat2) / 2, midLon = (e.lon1 + e.lon2) / 2;
-  check(Math.abs(midLat - kdfw.lat) < 1e-9 && Math.abs(midLon - kdfw.lon) < 1e-9,
-    'runways: endpoints are symmetric about the airport reference');
+  check(Math.abs(midLat - kdfw.lat) < 0.001 && Math.abs(midLon - kdfw.lon) < 0.001,
+    `runways: midpoint near airport reference (ΔlAt=${Math.abs(midLat-kdfw.lat).toFixed(5)})`);
   // Endpoint separation ≈ runway length (within 2%).
   const cosLat = Math.cos((kdfw.lat * Math.PI) / 180);
   const dNorthNm = (e.lat1 - e.lat2) * 60;
@@ -1461,6 +1487,17 @@ async function runwayLayerTests() {
   check(Math.abs(lenNm - expectNm) / expectNm < 0.02,
     `runways: endpoint span ≈ runway length (got ${lenNm.toFixed(2)}nm, want ${expectNm.toFixed(2)}nm)`);
 
+  // ── runwayHeadingDeg: computed from stored endpoints, plausible for runway ───
+  const hdg = runwayHeadingDeg(rw); // 17R/35L, expected ~175° (nearly due south → north = 355°)
+  // endA is the south end (17R), endB is the north end (35L). Heading from south→north ≈ 355°.
+  check(Number.isFinite(hdg) && hdg >= 0 && hdg < 360,
+    `runways: runwayHeadingDeg returns valid bearing (got ${hdg.toFixed(1)})`);
+  // Reciprocal should be ~175° (endA→endB for 17R should be going SSE, not NNW).
+  // Actually endA is 17R (southern end), endB is 35L (northern end). Heading endA→endB = northward ≈ 355°.
+  // The reverse (landing direction for 17R) would be hdg - 180° ≈ 175°. Both are valid.
+  check(hdg > 300 || hdg < 20, // heading northward (355° ± 20°)
+    `runways: KDFW 17R/35L heading from endA→endB is northward (got ${hdg.toFixed(1)})`);
+
   // ── Distance/culling helper: nearby small, far larger ─────────────────────────
   const home = store.DEFAULT_SETTINGS.home; // Dallas
   const dDal = airportDistanceNm(AIRPORTS.find((a) => a.icao === 'KDAL'), home);
@@ -1468,7 +1505,7 @@ async function runwayLayerTests() {
   check(dDal >= 0 && dDal < 15, `runways: KDAL is near home (got ${dDal.toFixed(1)}nm)`);
   check(dTki > dDal, `runways: KTKI is farther than KDAL (${dTki.toFixed(1)} > ${dDal.toFixed(1)})`);
 
-  // ── Renderer wiring: runways draw before aircraft, never gate aircraft ────────
+  // ── Renderer wiring: amber strips, layer guard, draw order ───────────────────
   {
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
@@ -1481,6 +1518,122 @@ async function runwayLayerTests() {
       'runways: drawn before the aircraft block (aircraft paint on top)');
     check(/if \(!layers\.runways/.test(src),
       'runways: render is guarded by the layers.runways toggle (off = no-op)');
+    // Strip is drawn as a filled rectangle (polygon path with closePath).
+    check(src.includes('cx[0]') && src.includes('cy[0]') && src.includes('closePath'),
+      'runways: outlined rectangle strip (polygon corners + closePath)');
+    // Amber color is used (not old blue-gray).
+    check(src.includes('255,195,50') || src.includes('AMBER_CSS'),
+      'runways: amber/yellow color used for strips (not blue-gray)');
+    // Dashed centerline.
+    check(src.includes('setLineDash') && src.includes('dashLen'),
+      'runways: dashed centerline drawn');
+    // Runway numbers at each threshold.
+    check(src.includes('endA?.id') && src.includes('endB?.id'),
+      'runways: runway number labels use endA/endB ids');
+    // runwayBrightness slider wired.
+    check(src.includes('getRunwayBrightness'),
+      'runways: SkyRenderer uses getRunwayBrightness()');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Part Q — runway brightness slider + OrbitalRow cached/backoff fix (no network)
+// ---------------------------------------------------------------------------
+async function runwayBrightnessAndOrbitalStatusTests() {
+  console.log('\nPart Q — runway brightness + OrbitalRow cached-backoff status (no network)');
+
+  // ── getRunwayBrightness clamps and falls back safely ─────────────────────────
+  const { getRunwayBrightness } = await import('../frontend/src/lib/displayModes.js');
+
+  check(getRunwayBrightness({ display: {} }) === 0.45,
+    'runwayBrightness: unset → default 0.45');
+  check(getRunwayBrightness({ display: { runwayBrightness: 0.7 } }) === 0.7,
+    'runwayBrightness: explicit 0.7 reads back');
+  check(getRunwayBrightness({ display: { runwayBrightness: 0 } }) === 0,
+    'runwayBrightness: 0 allowed (hides runways)');
+  check(getRunwayBrightness({ display: { runwayBrightness: 1 } }) === 1,
+    'runwayBrightness: 1.0 allowed (full brightness)');
+  check(getRunwayBrightness({ display: { runwayBrightness: 5 } }) === 1,
+    'runwayBrightness: above-1 clamped to 1');
+  check(getRunwayBrightness({ display: { runwayBrightness: -1 } }) === 0,
+    'runwayBrightness: below-0 clamped to 0');
+  check(getRunwayBrightness({ display: { runwayBrightness: 'oops' } }) === 0.45,
+    'runwayBrightness: non-numeric falls back to 0.45');
+
+  // ── ControlPanel has the runway brightness slider ─────────────────────────────
+  {
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    const url = await import('node:url');
+    const here = path.dirname(url.fileURLToPath(import.meta.url));
+    const cpSrc = await fs.readFile(path.join(here, '..', 'frontend', 'src', 'components', 'ControlPanel.jsx'), 'utf8');
+    check(cpSrc.includes('runwayBrightness'),
+      'runwayBrightness: ControlPanel includes the slider');
+    check(cpSrc.includes("setDisplay({ runwayBrightness:"),
+      'runwayBrightness: ControlPanel wires onChange to setDisplay');
+  }
+
+  // ── OrbitalRow statusText: blocked + cache → "cached (backoff)" ──────────────
+  // Mirror the logic from StatusPanel.jsx OrbitalRow so we can unit-test it.
+  function orbitalStatusText(m) {
+    return m.blocked
+      ? (m.count > 0 ? 'cached (backoff)' : 'unavailable')
+      : m.ok ? `${m.count}/${m.cap} shown`
+      : m.lastError ? 'error'
+      : 'loading';
+  }
+  function orbitalStatusClass(m) {
+    return (m.blocked && m.count === 0) || (!m.ok && m.lastError) ? 'bad'
+      : m.blocked && m.count > 0 ? 'ok'
+      : m.ok ? 'ok' : '';
+  }
+
+  // Blocked with cache → "cached (backoff)", class "ok" (data available).
+  const blockedWithCache = { blocked: true, count: 25, cap: 25, ok: false };
+  check(orbitalStatusText(blockedWithCache) === 'cached (backoff)',
+    'OrbitalRow: blocked + count>0 → "cached (backoff)"');
+  check(orbitalStatusClass(blockedWithCache) === 'ok',
+    'OrbitalRow: blocked + count>0 → class "ok" (data available)');
+
+  // Blocked with no cache → "unavailable", class "bad".
+  const blockedNoCache = { blocked: true, count: 0, cap: 25, ok: false };
+  check(orbitalStatusText(blockedNoCache) === 'unavailable',
+    'OrbitalRow: blocked + count=0 → "unavailable"');
+  check(orbitalStatusClass(blockedNoCache) === 'bad',
+    'OrbitalRow: blocked + count=0 → class "bad"');
+
+  // Normal OK state.
+  const normal = { blocked: false, count: 20, cap: 25, ok: true };
+  check(orbitalStatusText(normal) === '20/25 shown', 'OrbitalRow: normal ok → "N/cap shown"');
+  check(orbitalStatusClass(normal) === 'ok', 'OrbitalRow: normal ok → class "ok"');
+
+  // Error state (not blocked, not ok, has error).
+  const errored = { blocked: false, count: 0, cap: 25, ok: false, lastError: 'HTTP 404' };
+  check(orbitalStatusText(errored) === 'error', 'OrbitalRow: not-ok + lastError → "error"');
+  check(orbitalStatusClass(errored) === 'bad', 'OrbitalRow: not-ok + lastError → class "bad"');
+
+  // Loading state (no block, no ok, no error yet).
+  const loading = { blocked: false, count: 0, cap: 25, ok: false };
+  check(orbitalStatusText(loading) === 'loading', 'OrbitalRow: initial state → "loading"');
+  check(orbitalStatusClass(loading) === '', 'OrbitalRow: loading → no status class');
+
+  // ── StatusPanel source confirms the fix ──────────────────────────────────────
+  {
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    const url = await import('node:url');
+    const here = path.dirname(url.fileURLToPath(import.meta.url));
+    const spSrc = await fs.readFile(path.join(here, '..', 'frontend', 'src', 'components', 'StatusPanel.jsx'), 'utf8');
+    check(spSrc.includes("'cached (backoff)'"),
+      'OrbitalRow: StatusPanel.jsx contains "cached (backoff)" text');
+    check(spSrc.includes('m.count > 0'),
+      'OrbitalRow: StatusPanel.jsx gates on m.count > 0 before showing cached status');
+    // Runway brightness shown in status.
+    check(spSrc.includes('runwayBrightness'),
+      'StatusPanel: runway brightness shown in runway section');
+    // Dataset source shown.
+    check(spSrc.includes('local DFW'),
+      'StatusPanel: runway dataset source label shown');
   }
 }
 
@@ -1502,5 +1655,6 @@ await celestialBrightnessAndCalibrationTests();
 await aircraftVisibilityTests();
 await starlinkRobustnessTests();
 await runwayLayerTests();
+await runwayBrightnessAndOrbitalStatusTests();
 console.log(failed ? '\nSMOKE CHECK FAILED' : '\nSMOKE CHECK PASSED');
 process.exit(failed ? 1 : 0);

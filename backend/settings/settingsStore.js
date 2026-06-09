@@ -39,6 +39,8 @@ export const DEFAULT_SETTINGS = {
     showMoonPath: true,
     // Airport runway label visibility: 'off' | 'airport' | 'airportRunway'.
     runwayLabels: 'airport',
+    // Runway strip brightness (0..1). 0.45 keeps strips subtle behind aircraft.
+    runwayBrightness: 0.45,
     // Radar/compass overlay visibility. Each element can be hidden independently
     // for a clean live-sky / projector look; object layers are unaffected.
     radar: { rings: true, compass: true, nmLabels: true, crosshair: true },

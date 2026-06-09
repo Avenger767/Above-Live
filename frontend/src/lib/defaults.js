@@ -22,6 +22,7 @@ export const DEFAULT_SETTINGS = {
     spaceLabels: 'major',       // 'off' | 'major' (Sun/Moon/ISS) | 'all'
     showMoonPath: true,         // show Moon's daily arc across the sky dome
     runwayLabels: 'airport',    // 'off' | 'airport' | 'airportRunway'
+    runwayBrightness: 0.45,    // 0 hides runways; 1 = full; 0.45 is subtle default
     // Radar/compass overlay visibility (object layers are unaffected). Turn
     // these off for a clean live-sky / projector look.
     radar: { rings: true, compass: true, nmLabels: true, crosshair: true },
