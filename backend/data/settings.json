@@ -25,6 +25,8 @@
     "glyphDebug": false,
     "spaceLabels": "major",
     "showMoonPath": true,
+    "runwayLabels": "airport",
+    "runwayBrightness": 0.45,
     "radar": {
       "rings": true,
       "compass": true,
@@ -81,7 +83,8 @@
     "satellites": false,
     "starlink": false,
     "space": false,
-    "stars": true
+    "stars": true,
+    "runways": false
   },
   "weather": {
     "provider": "openmeteo",
@@ -103,7 +106,7 @@
     "group": "starlink",
     "cap": 25,
     "pollIntervalMs": 8000,
-    "tleTtlMs": 43200000
+    "tleTtlMs": 7200000
   },
   "space": {
     "pollIntervalMs": 60000
